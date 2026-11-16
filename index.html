@@ -1238,7 +1238,10 @@ function buildComposer(){
   composer.addPass(new RenderPass(scene,camera));
   aoPass=null;
   if(q.ao&&GTAOPass){try{aoPass=new GTAOPass(scene,camera,innerWidth,innerHeight);aoPass.updateGtaoMaterial({radius:0.9,distanceFallOff:1.0,thickness:1.2,samples:12});aoPass.blendIntensity=0.85;
-      const orig=aoPass.render.bind(aoPass);aoPass.render=(...a)=>{fxGroup.visible=false;const sv=scene.fog;orig(...a);fxGroup.visible=true;scene.fog=sv;};composer.addPass(aoPass);}catch(e){console.warn('AO off',e);aoPass=null;}}
+      const orig=aoPass.render.bind(aoPass);aoPass.render=(...a)=>{fxGroup.visible=false;
+        // свечения (спрайты) и прозрачные щиты дронов нельзя пускать в расчёт теней AO: иначе вокруг дрона рисовался чёрный квадрат
+        const hid=[];dyn.traverse(o=>{if(o.visible&&(o.isSprite||(o.material&&o.material.transparent))){o.visible=false;hid.push(o);}});
+        const sv=scene.fog;orig(...a);fxGroup.visible=true;scene.fog=sv;for(const o of hid)o.visible=true;};composer.addPass(aoPass);}catch(e){console.warn('AO off',e);aoPass=null;}}
   // защита от чёрных квадратов: слишком яркие (Inf) или битые (NaN) пиксели от вспышек выстрелов размазывались блумом в чёрный квадрат
   composer.addPass(new ShaderPass({uniforms:{tDiffuse:{value:null}},vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
     fragmentShader:'uniform sampler2D tDiffuse;varying vec2 vUv;void main(){vec4 c=texture2D(tDiffuse,vUv);vec3 r=c.rgb;bvec3 bad=bvec3(!(r.x>=0.0)||!(r.x<1e4),!(r.y>=0.0)||!(r.y<1e4),!(r.z>=0.0)||!(r.z<1e4));if(any(bad))r=vec3(0.0);gl_FragColor=vec4(min(r,vec3(40.0)),1.0);}'}));
@@ -1276,7 +1279,7 @@ function startMode(mode,opts={}){
     trackGroup.visible=true;gatesActive=true;
   }else{trackGroup.visible=false;gatesActive=false;}
   showEditLine(mode==='editor');
-  rebuildPlayer();P.maxHp=P.cfg.hp;P.hp=P.maxHp;P.alive=true;P.heat=0;P.overheat=false;P.shield=0;P.shieldCd=0;P.rocketCd=0;P.empCd=0;P.ohT=0;P.fireCd=0;P.boostE=1;P.bat=16.8;
+  rebuildPlayer();P.maxHp=P.cfg.hp;P.hp=P.maxHp;P.alive=true;P.heat=0;P.overheat=false;P.shield=0;P.shieldCd=0;P.rocketCd=0;P.empCd=0;P.ohT=0;P.salvo=null;P.fireCd=0;P.boostE=1;P.bat=16.8;
   Object.assign(race,{next:0,lapRunning:false,laps:0,lapsTarget:mode==='duel'?(opts.mission==='m2'?2:3):0,t:0,lapStart:0,rec:[],recNext:0,lastGate:-1,lastLap:null,finished:false});
   race.best=store.get('id.best.'+trackCode,null);
   ghost.frames=store.get('id.ghost.'+trackCode,null);ghost.idx=0;
@@ -1585,6 +1588,22 @@ const WEAPONS={
   rail:{name:'Рельсотрон',desc:'Мгновенный луч прошивает всех врагов на линии насквозь. Медленный, сильно греется.',price:1500}
 };
 const railFx=[];
+function salvoRocket(s){
+  const i=s.n++;const ts=s.ts.filter(h=>h.alive!==false&&h.team!=='ally');const tg=ts.length?ts[i%ts.length]:null;
+  const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone();
+  const side=(i%2?1:-1)*0.12;const gun=new V3(side,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
+  const d=f.clone().add(new V3(rand(-1,1),rand(-0.2,0.8),rand(-1,1)).multiplyScalar(0.35)).normalize();
+  const mesh=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.04,0.32,8),new THREE.MeshBasicMaterial({color:new THREE.Color(3,2,1)}));mesh.geometry.rotateX(Math.PI/2);fxGroup.add(mesh);
+  rockets.push({p:gun.clone().addScaledVector(d,0.3),v:d.multiplyScalar(rand(18,24)).add(P.vel),target:tg,life:4.5,mesh,dmg:45,rad:4,small:true});
+  sfx('rocket',null,0.6);addShake(0.05);P.w.x+=rand(0.1,0.25);flashLight(gun,[1,0.6,0.3],40,0.06);
+}
+function updateSalvo(dt){
+  const s=P.salvo;if(!s)return;
+  if(!P.alive){P.salvo=null;P.ohT=1;return;}
+  s.t-=dt;while(s.t<=0&&s.n<8){salvoRocket(s);s.t+=0.08;}
+  P.heat=1;P.overheat=true;
+  if(s.n>=8){P.salvo=null;P.ohT=1;}
+}
 function fireSpecial(W){
   const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone();
   const gun=new V3(0,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
@@ -1592,11 +1611,8 @@ function fireSpecial(W){
     if(aim)f.subVectors(aim.pos,P.pos).normalize();}
   if(W==='swarm'){
     const ts=hostiles().filter(h=>{const d=_v2.subVectors(h.pos,P.pos);return d.length()<130&&f.angleTo(d)<1.0;}).sort((a,b)=>f.angleTo(_v2.subVectors(a.pos,P.pos))-f.angleTo(_v3.subVectors(b.pos,P.pos)));
-    for(let i=0;i<8;i++){const tg=ts.length?ts[i%ts.length]:null;
-      const d=f.clone().add(new V3(rand(-1,1),rand(-0.3,1),rand(-1,1)).multiplyScalar(0.45)).normalize();
-      const mesh=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.04,0.32,8),new THREE.MeshBasicMaterial({color:new THREE.Color(3,2,1)}));mesh.geometry.rotateX(Math.PI/2);fxGroup.add(mesh);
-      rockets.push({p:gun.clone().addScaledVector(d,0.3),v:d.multiplyScalar(rand(16,24)).add(P.vel),target:tg,life:4.5,mesh,dmg:45,rad:4,small:true});}
-    P.heat=1;P.overheat=true;P.ohT=1;P.fireCd=0.2;sfx('swarm');addShake(0.15);flashLight(gun,[1,0.6,0.3],60,0.12);
+    // залп по очереди: 8 ракет с интервалом 0.08 с, перегрев сразу, остывание 1 с после последней
+    P.salvo={n:0,t:0,ts};P.heat=1;P.overheat=true;P.ohT=0;P.fireCd=0.2;
   }else if(W==='shotgun'){
     for(let i=0;i<9;i++){const d=f.clone().add(new V3(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(0.07)).normalize();fireBolt(gun,d,200,'player',P.cfg.dmg*0.9,[6,3.2,1.1],2.2);}
     muzzleFlash(gun,f);muzzle.scale.setScalar(0.32);P.fireCd=0.5;P.heat+=0.34*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
@@ -1621,8 +1637,8 @@ function updateCombat(dt,rdt){
   for(const t of turrets)updateTurret(t,dt);
   updateRockets(dt);updateRailFx(dt);
   // стрельба игрока
-  P.fireCd-=dt;
-  if(P.ohT>0){P.ohT-=dt;P.heat=Math.max(0,P.ohT);if(P.ohT<=0){P.heat=0;P.overheat=false;sfx('beep');}}
+  P.fireCd-=dt;updateSalvo(dt);
+  if(P.salvo){}else if(P.ohT>0){P.ohT-=dt;P.heat=Math.max(0,P.ohT);if(P.ohT<=0){P.heat=0;P.overheat=false;sfx('beep');}}
   else{P.heat=Math.max(0,P.heat-dt*(P.overheat?0.35:0.45));if(P.overheat&&P.heat<0.35)P.overheat=false;}
   const W=WEAPONS[profile.weapon]?profile.weapon:'gun';
   if(W!=='gun'&&inp.fire&&P.alive&&!P.overheat&&P.fireCd<=0&&session.countdown<=0&&P.crashed<=0)fireSpecial(W);
@@ -2060,6 +2076,15 @@ function renderHangar(){
     const tag=sel?'УСТАНОВЛЕНО':own?'':(profile.credits>=w.price?'КУПИТЬ: ':'ЦЕНА: ')+w.price+' КР';
     return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<w.price?'lock':''}" data-weapon="${k}"><b>${w.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${w.desc}</p></div>`;}).join('');
 }
+// секретный промокод: в коде хранится только отпечаток, а не сам код
+function usePromo(){
+  const el=$('#promo-in'),msg=$('#promo-msg');if(!el)return;const s=el.value.trim().toUpperCase();
+  let x=5381;for(const c of s)x=((x*33)^c.charCodeAt(0))>>>0;
+  profile.promos=profile.promos||{};
+  if(x===1556230643){if(profile.promos[x]){msg.textContent='Этот промокод уже активирован';msg.style.color='var(--red)';sfx('err');return;}
+    profile.promos[x]=true;profile.credits+=1000000;saveP();msg.textContent='Промокод принят: +1 000 000 кредитов';msg.style.color='var(--ok)';sfx('buy');el.value='';}
+  else{msg.textContent='Неверный промокод';msg.style.color='var(--red)';sfx('err');}
+}
 function toastMenu(msg){const el=$('#hg-cr');el.textContent=msg;el.style.color='var(--red)';sfx('err');clearTimeout(toastMenu.t);toastMenu.t=setTimeout(()=>{el.style.color='#ffd27a';el.textContent=profile.credits+' КР';},1800);}
 function renderTracks(){
   const cur=trackCode;
@@ -2075,6 +2100,8 @@ function renderMissions(){
 function renderSettings(){
   const q=settings;
   $('#st-list').innerHTML=`
+  <div class="set" style="border:1px solid var(--acc2);padding:6px 8px">ПРОМОКОД<span style="display:flex;gap:6px"><input id="promo-in" maxlength="24" autocomplete="off" placeholder="введи код" style="background:#15171c;color:var(--txt);border:1px solid var(--line);font:600 15px Rajdhani,sans-serif;padding:4px 6px;width:130px;text-transform:uppercase"><button class="pbtn" data-act="promo" style="flex:none;padding:4px 12px;font-size:15px">ОК</button></span></div>
+  <div class="note" id="promo-msg"></div>
   <div class="set">Качество графики<select data-set="quality">${QORDER.map(k=>`<option value="${k}" ${q.quality===k?'selected':''}>${QUALITY[k].name}</option>`).join('')}</select></div>
   <div class="set">Авто-снижение при низком FPS<input type="checkbox" data-set="autoQ" ${q.autoQ?'checked':''}></div>
   <div class="set">Время суток<select data-set="tod"><option value="day" ${q.tod!=='night'?'selected':''}>Закат</option><option value="night" ${q.tod==='night'?'selected':''}>Ночь, гроза и дождь</option></select></div>
@@ -2119,6 +2146,7 @@ $('#menu').addEventListener('click',e=>{
     case 'race':startMode('race');break;case 'duel':startMode('duel');break;case 'combat':startMode('combat');break;case 'editor':startMode('editor');break;case 'drift':startMode('drift');break;
     case 'missions':case 'hangar':case 'settings':case 'help':case 'tracks':openPanel(a);break;
     case 'back':if(panelBack==='pause'&&state==='pause')openPanel('pause');else openPanel('main');break;
+    case 'promo':usePromo();break;
     case 'resume':resumeGame();break;
     case 'restart':if(lastStart)startMode(lastStart.mode,lastStart.opts);break;
     case 'tomenu':toMenu();break;
