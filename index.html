@@ -1107,10 +1107,12 @@ function stepPlayer(inp,dt){
       _dw.set(_qE.x/s,_qE.y/s,_qE.z/s).multiplyScalar(Math.min(ang*9,C.rate));
       // удержание высоты: без нажатий дрон держит запомненную высоту (раньше его сносило вверх эффектом земли)
       if(Math.abs(inp.climb)>0.05||P.altT===undefined||!isFinite(P.altT))P.altT=P.pos.y;
-      const vyT=Math.abs(inp.climb)>0.05?inp.climb*7.5:clamp((P.altT-P.pos.y)*2.5,-3,3);
+      const vyT=Math.abs(inp.climb)>0.05?inp.climb*(inp.climb>0?15:11):clamp((P.altT-P.pos.y)*3,-4,4);
       const geH=1+0.25*Math.max(0,1-P.pos.y/1.2),m=P.mot;
       const twEff=C.twr*(0.86+0.14*clamp((P.bat-13.2)/3.6,0,1))*((m[0]+m[1]+m[2]+m[3])/4*0.75+0.25*(deadMotors()?0:1))*geH;
-      const aReq=g+(vyT-P.vel.y)*2.2-gust.y;thr=clamp(aReq/(twEff*g*Math.max(upY,0.35)),0,1);
+      // воздушный тормоз: когда отпустил подъём или жмёшь спуск, вертикальный разгон гасится быстрее (меньше перелёта)
+      if(inp.climb<0.05&&P.vel.y>0)P.vel.y*=Math.exp(-dt*(inp.climb<-0.05?5:2));
+      const aReq=g+(vyT-P.vel.y)*(inp.climb>0.05?4.5:3)-gust.y;thr=clamp(aReq/(twEff*g*Math.max(upY,0.35)),0,1);
     }
     // разбитые моторы: дрон тянет в сторону слабого мотора, крутит по рыскanию и трясёт
     {const m=P.mot,K=6*thr;
