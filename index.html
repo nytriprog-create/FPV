@@ -857,7 +857,7 @@ function buildDroneModel(typeKey,S,scale=1){
   g.scale.setScalar(scale);
   return {group:g,props,led:ledM,baseLed:new THREE.Color(...S.led)};
 }
-function disposeObj(o){o.traverse(c=>{if(c.geometry&&!c.isSprite)c.geometry.dispose();if(c.material&&!c.material.userData.shared)(Array.isArray(c.material)?c.material:[c.material]).forEach(m=>m.dispose());});if(o.parent)o.parent.remove(o);}
+function disposeObj(o){o.traverse(c=>{if(c.geometry&&!c.isSprite&&!c.userData.keepGeo)c.geometry.dispose();if(c.material&&!c.material.userData.shared)(Array.isArray(c.material)?c.material:[c.material]).forEach(m=>m.dispose());});if(o.parent)o.parent.remove(o);}
 function spinProps(model,speed,dt){for(const p of model.props)p.g.rotation.y+=p.dir*speed*dt;}
 
 // ================= ТРАССА =================
@@ -1340,7 +1340,7 @@ function startMode(mode,opts={}){
     trackGroup.visible=true;gatesActive=true;
   }else{trackGroup.visible=false;gatesActive=false;}
   showEditLine(mode==='editor');
-  rebuildPlayer();P.maxHp=P.cfg.hp;P.hp=P.maxHp;P.alive=true;P.heat=0;P.overheat=false;P.shield=0;P.shieldCd=0;P.rocketCd=0;P.empCd=0;P.ohT=0;P.salvo=null;P.fireCd=0;P.boostE=1;P.bat=16.8;
+  rebuildPlayer();P.maxHp=P.cfg.hp;P.hp=P.maxHp;P.alive=true;P.heat=0;P.overheat=false;P.shield=0;P.shieldCd=0;P.rocketCd=0;P.empCd=0;P.ohT=0;P.salvo=null;P.hcd=0;P.spin=0;P.fireCd=0;P.boostE=1;P.bat=16.8;
   Object.assign(race,{next:0,lapRunning:false,laps:0,lapsTarget:mode==='duel'?(opts.mission==='m2'?2:3):0,t:0,lapStart:0,rec:[],recNext:0,lastGate:-1,lastLap:null,finished:false});
   race.best=store.get('id.best.'+trackCode,null);
   ghost.frames=store.get('id.ghost.'+trackCode,null);ghost.idx=0;
@@ -1638,8 +1638,8 @@ function updateRockets(dt){
     _v3.copy(r.p);r.p.addScaledVector(r.v,dt);
     if(r.plasma){for(let k=0;k<2;k++)sparks.emit(r.p.x,r.p.y,r.p.z,rand(-1.5,1.5),rand(-1.5,1.5),rand(-1.5,1.5),1.2,3,8,0.1,0.25,0,2);}
     else if(r.gren){if(Math.random()<0.5)smoke.emit(r.p.x,r.p.y,r.p.z,0,0.2,0,0.12,0.12,0.12,0.1,0.6,-0.2,1,3);r.mesh.rotation.x+=dt*14;}
-    else{smoke.emit(r.p.x,r.p.y,r.p.z,rand(-0.4,0.4),rand(-0.4,0.4),rand(-0.4,0.4),0.14,0.13,0.12,0.25,1.2,-0.3,1,3);
-      sparks.emit(r.p.x,r.p.y,r.p.z,-r.v.x*0.05,-r.v.y*0.05,-r.v.z*0.05,6,2.5,0.6,0.18,0.12,0,0);}
+    else{if(!r.storm||Math.random()<0.3)smoke.emit(r.p.x,r.p.y,r.p.z,rand(-0.4,0.4),rand(-0.4,0.4),rand(-0.4,0.4),0.14,0.13,0.12,0.25,1.2,-0.3,1,3);
+      if(!r.storm||Math.random()<0.5)sparks.emit(r.p.x,r.p.y,r.p.z,-r.v.x*0.05,-r.v.y*0.05,-r.v.z*0.05,6,2.5,0.6,0.18,0.12,0,0);}
     r.mesh.position.copy(r.p);if(!r.gren)r.mesh.quaternion.setFromUnitVectors(_v.set(0,0,1),_v2.copy(r.v).normalize());
     let boom=r.life<=0||pointBlocked(r.p);
     if(!boom)for(const h of hostiles())if(segSphere(_v3,r.p,h.pos,(h.r||1)+(r.gren?0.5:1))){boom=true;break;}
@@ -1662,8 +1662,25 @@ const WEAPONS={
   grenade:{name:'Гранатомёт',desc:'Гранаты летят по дуге и взрываются при ударе. Большой радиус взрыва, бьёт врагов за укрытием.',price:700},
   plasma:{name:'Плазма',desc:'Медленный светящийся шар. Попадание — сильный взрыв плазмы, оглушает дронов.',price:1100},
   tesla:{name:'Тесла',desc:'Молния бьёт ближайшего врага в прицеле и перескакивает ещё на 4 цели рядом. Оглушает.',price:1300},
-  laser:{name:'Лазер',desc:'Непрерывный луч, пока держишь огонь. Плавит всё на линии, но быстро перегревается.',price:1600}
+  laser:{name:'Лазер',desc:'Непрерывный луч, пока держишь огонь. Плавит всё на линии, но быстро перегревается.',price:1600},
+  storm:{name:'Металлический шторм',desc:'Сплошной поток самонаводящихся ракет, 25 в секунду, без перегрева. Запас 100 000 ракет, кончатся — можно купить снова.',price:50000}
 };
+const STORM_AMMO=100000;
+let stormGeo=null,stormMat=null;
+function fireStorm(f,gun){
+  if(!stormGeo){stormGeo=new THREE.CylinderGeometry(0.025,0.03,0.26,6);stormGeo.rotateX(Math.PI/2);stormMat=new THREE.MeshBasicMaterial({color:new THREE.Color(4,2.2,1)});stormMat.userData.shared=true;}
+  // цели: враги в широком конусе, по очереди
+  const ts=hostiles().filter(h=>{const d=_v2.subVectors(h.pos,P.pos);return d.length()<140&&f.angleTo(d)<1.1;});
+  P.stormI=(P.stormI||0)+1;const tg=ts.length?ts[P.stormI%ts.length]:null;
+  const side=(P.stormI%4-1.5)*0.07;const gp=new V3(side,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
+  const d=f.clone().add(new V3(rand(-1,1),rand(-0.3,0.6),rand(-1,1)).multiplyScalar(0.25)).normalize();
+  const mesh=new THREE.Mesh(stormGeo,stormMat);mesh.userData.keepGeo=true;fxGroup.add(mesh);
+  rockets.push({p:gp.clone().addScaledVector(d,0.3),v:d.multiplyScalar(rand(26,32)).add(P.vel),target:tg,life:3.5,mesh,dmg:30,rad:3,small:true,storm:true});
+  profile.stormAmmo=Math.max(0,(profile.stormAmmo||0)-1);
+  if(P.stormI%2)sfx('rocket',null,0.35);addShake(0.025);P.w.x+=rand(0.05,0.15);if(P.stormI%3===0)flashLight(gp,[1,0.6,0.3],30,0.05);
+  if(profile.stormAmmo<=0){profile.weapons=profile.weapons.filter(w=>w!=='storm');profile.weapon='gun';toast('МЕТАЛЛИЧЕСКИЙ ШТОРМ: РАКЕТЫ КОНЧИЛИСЬ','bad');}
+  if(P.stormI%50===0||profile.stormAmmo<=0)saveP();
+}
 const railFx=[];
 function salvoRocket(s){
   const i=s.n++;const ts=s.ts.filter(h=>h.alive!==false&&h.team!=='ally');const tg=ts.length?ts[i%ts.length]:null;
@@ -1684,6 +1701,7 @@ function updateSalvo(dt){
 function fireSpecial(W){
   const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone();
   const gun=new V3(0,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
+  if(W==='storm'){fireStorm(f,gun);P.fireCd=0.04;return;}
   const RNG={rail:150,minigun:80,grenade:70,plasma:90,tesla:38,laser:90};
   let aim=null;
   if(W!=='swarm'){let ba=W==='tesla'?0.35:0.12;for(const h of hostiles()){_v2.subVectors(h.pos,P.pos);if(_v2.length()>(RNG[W]||45))continue;const a=f.angleTo(_v2);if(a<ba){ba=a;aim=h;}}
@@ -1735,7 +1753,7 @@ function fireSpecial(W){
     const g=new THREE.CylinderGeometry(0.035,0.035,1,8,1,true);g.rotateX(Math.PI/2);
     const m=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:new THREE.Color(1.5,5,12),transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
     m.position.lerpVectors(gun,end,0.5);m.quaternion.setFromUnitVectors(new V3(0,0,1),f);m.scale.set(1,1,gun.distanceTo(end));fxGroup.add(m);railFx.push({m,t:0.35});
-    P.fireCd=0.95;P.heat+=0.45*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+    P.fireCd=0.95;P.heat+=0.55*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
     sfx('rail');addShake(0.2);P.w.x+=rand(1,1.6);flashLight(gun,[0.4,0.8,1],80,0.1);if(n>1)toast('ПРОШИТО НАСКВОЗЬ: '+n,'ok');
   }
 }
@@ -1763,7 +1781,7 @@ function updateLaser(dt,on){
   const end=gun.clone().addScaledVector(f,L);
   laserM.position.lerpVectors(gun,end,0.5);laserM.quaternion.setFromUnitVectors(_v2.set(0,0,1),f);const th=1+Math.random()*0.6;laserM.scale.set(th,th,L);
   sparks.emit(end.x,end.y,end.z,rand(-3,3),rand(0,3),rand(-3,3),8,2.5,0.8,0.03,0.25,9.8,1);
-  P.heat+=0.42*dt*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+  P.heat+=0.33*dt*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
   laserT-=dt;if(laserT<=0){laserT=0.1;sfx('laser');flashLight(end,[1,0.25,0.25],18,0.1);
     if(Math.random()<0.5)smoke.emit(end.x,end.y,end.z,0,0.6,0,0.1,0.1,0.1,0.15,0.8,-0.2,2,3);
     for(const h of hostiles())if(segSphere(gun,end,h.pos,(h.r||1)+0.2)){damageEntity(h,P.cfg.dmg*1.7,'player');burst(h.pos,5,[8,1.5,1],5,0.04,0.25,6,1);}}
@@ -1776,8 +1794,11 @@ function updateCombat(dt,rdt){
   // стрельба игрока
   P.fireCd-=dt;updateSalvo(dt);
   if(P.salvo){}else if(P.ohT>0){P.ohT-=dt;P.heat=Math.max(0,P.ohT);if(P.ohT<=0){P.heat=0;P.overheat=false;sfx('beep');}}
-  else{P.heat=Math.max(0,P.heat-dt*(P.overheat?0.35:0.45));if(P.overheat&&P.heat<0.35)P.overheat=false;}
-  const W=WEAPONS[profile.weapon]?profile.weapon:'gun';
+  else{
+    // остывание начинается только через 0.45 с после последнего выстрела; при перегреве — до нуля
+    if(P.hcd>0){P.hcd-=dt;if(!P.overheat)P.heat=Math.max(0,P.heat-dt*0.2);}else P.heat=Math.max(0,P.heat-dt*(P.overheat?0.5:0.6));
+    if(P.overheat&&P.heat<=0){P.overheat=false;sfx('beep');}}
+  const W=WEAPONS[profile.weapon]?profile.weapon:'gun';const heat0=P.heat;
   P.spin=W==='minigun'&&inp.fire&&!P.overheat?Math.min(1,P.spin+dt*0.8):Math.max(0,P.spin-dt*1.5);
   if(W==='laser')updateLaser(dt,inp.fire&&P.alive&&!P.overheat&&session.countdown<=0&&P.crashed<=0);
   else if(laserM&&laserM.visible)laserM.visible=false;
@@ -1793,6 +1814,7 @@ function updateCombat(dt,rdt){
     fireBolt(_v3,sd,240,'player',P.cfg.dmg,[6,3.2,1.1],4);muzzleFlash(_v3,sd);
     sparks.emit(_v3.x,_v3.y,_v3.z,sd.x*6+rand(-1,1),sd.y*6+rand(-1,1),sd.z*6+rand(-1,1),4,2.2,0.7,0.025,0.12,0,3);
     sfx('shot',null,0.8);flashLight(_v3,[1,0.7,0.35],22,0.04);addShake(0.02);P.w.x+=rand(0.2,0.5);}
+  if(P.heat>heat0+1e-6)P.hcd=0.45;
   // способности
   P.rocketCd=Math.max(0,P.rocketCd-dt);P.shieldCd=Math.max(0,P.shieldCd-dt);P.shield=Math.max(0,P.shield-dt);
   if(inp.rocket&&P.alive){if(!hasMod('rockets'))toast('Нужен модуль Ракеты (Ангар)','bad');else if(P.rocketCd<=0){fireRocket();P.rocketCd=2.5;}}
@@ -2117,7 +2139,7 @@ function updateHUD(rdt){
     H.heat.style.width=(P.heat*100)+'%';H.heat.style.background=P.overheat?'var(--red)':'var(--acc)';
     H.boostW.style.display=hasMod('boost')?'block':'none';H.boost.style.width=(P.boostE*100)+'%';
     const wk=WEAPONS[profile.weapon]?profile.weapon:'gun';
-    let mh='<div class="mod'+(P.overheat?' cd':'')+'" style="border-color:var(--acc2)">ЛКМ '+WEAPONS[wk].name.toUpperCase()+(P.ohT>0?' '+P.ohT.toFixed(1):'')+'</div>';for(const k of profile.modules){const cd=k==='rockets'?P.rocketCd/2.5:k==='shield'?(P.shield>0?0:P.shieldCd/14):k==='emp'?(P.empCd||0)/12:0;
+    let mh='<div class="mod'+(P.overheat?' cd':'')+'" style="border-color:var(--acc2)">ЛКМ '+WEAPONS[wk].name.toUpperCase()+(P.ohT>0?' '+P.ohT.toFixed(1):'')+(wk==='storm'?' '+(profile.stormAmmo||0):'')+'</div>';for(const k of profile.modules){const cd=k==='rockets'?P.rocketCd/2.5:k==='shield'?(P.shield>0?0:P.shieldCd/14):k==='emp'?(P.empCd||0)/12:0;
       mh+='<div class="mod'+(cd>0?' cd':'')+'">'+MODULES[k].key+' '+MODULES[k].name.toUpperCase()+(k==='shield'&&P.shield>0?' '+P.shield.toFixed(1):'')+'<i style="width:'+((1-cd)*100)+'%"></i></div>';}
     if(H.mods.innerHTML!==mh)H.mods.innerHTML=mh;
   }
@@ -2215,7 +2237,8 @@ function renderHangar(){
   $('#hg-modcount').textContent=profile.modules.length+'/'+MOD_SLOTS;
   $('#hg-weapons').innerHTML=Object.entries(WEAPONS).map(([k,w])=>{const own=profile.weapons.includes(k),sel=(profile.weapon||'gun')===k;
     const tag=sel?'УСТАНОВЛЕНО':own?'':(profile.credits>=w.price?'КУПИТЬ: ':'ЦЕНА: ')+w.price+' КР';
-    return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<w.price?'lock':''}" data-weapon="${k}"><b>${w.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${w.desc}</p></div>`;}).join('');
+    const ammo=k==='storm'&&own?' Осталось ракет: '+(profile.stormAmmo||0).toLocaleString('ru-RU')+'.':'';
+    return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<w.price?'lock':''}" data-weapon="${k}"><b>${w.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${w.desc}${ammo}</p></div>`;}).join('');
 }
 // секретный промокод: в коде хранится только отпечаток, а не сам код
 function usePromo(){
@@ -2271,7 +2294,7 @@ $('#menu').addEventListener('click',e=>{
   initAudio();if(e.target.closest('.btn,.card,.skin,.pbtn'))sfx('beep');
   const t=e.target.closest('[data-act],[data-drone],[data-skin],[data-mod],[data-mission],[data-up],[data-track],[data-weapon]');if(!t)return;
   if(t.dataset.weapon){const k=t.dataset.weapon,w=WEAPONS[k];
-    if(!profile.weapons.includes(k)){if(profile.credits<w.price){toastMenu('Не хватает кредитов: нужно '+w.price);return;}profile.credits-=w.price;profile.weapons.push(k);sfx('buy');}
+    if(!profile.weapons.includes(k)){if(profile.credits<w.price){toastMenu('Не хватает кредитов: нужно '+w.price);return;}profile.credits-=w.price;profile.weapons.push(k);if(k==='storm')profile.stormAmmo=STORM_AMMO;sfx('buy');}
     profile.weapon=k;saveP();renderHangar();return;}
   if(t.dataset.drone){const k=t.dataset.drone,d=DRONES[k];
     if(!profile.owned.includes(k)){if(profile.credits<d.price){toastMenu('Не хватает кредитов: нужно '+d.price);return;}profile.credits-=d.price;profile.owned.push(k);sfx('buy');}
