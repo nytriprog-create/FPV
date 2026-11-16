@@ -229,7 +229,7 @@ h3{font-size:15px;letter-spacing:.2em;color:var(--dim);margin:16px 0 8px;font-we
     <button class="btn" data-act="combat">Бой<small>Волны охраны, турели, камеры, кран; каждая 5-я волна — босс</small></button>
     <button class="btn" data-act="drift">Дрифт<small>90 секунд: набери максимум очков заноса</small></button>
     <button class="btn" data-act="missions">Миссии<small>15 испытаний: скины и кредиты</small></button>
-    <button class="btn" data-act="strike">Устранение<small>5 операций: бомби здания, отбивайся от техники, 20 спецсредств на ПКМ</small></button>
+    <button class="btn" data-act="strike">Устранение<small>5 операций: бомби здания и отбивайся от техники. Спецоружие (ПКМ) — в Ангаре</small></button>
     <button class="btn" data-act="hangar">Ангар<small>Дроны, улучшения, скины и модули · <span id="mm-cr" style="color:#ffd27a"></span></small></button>
     <button class="btn" data-act="tracks">Трассы<small>Три трассы и редактор своих</small></button>
     <button class="btn" data-act="settings">Настройки</button>
@@ -242,6 +242,7 @@ h3{font-size:15px;letter-spacing:.2em;color:var(--dim);margin:16px 0 8px;font-we
     <h3>УЛУЧШЕНИЯ</h3><div id="hg-ups"></div>
     <h3>СКИН</h3><div class="skins" id="hg-skins"></div>
     <h3>ОСНОВНОЕ ОРУЖИЕ (ЛКМ)</h3><div id="hg-weapons"></div>
+    <h3>СПЕЦОРУЖИЕ (ПКМ)</h3><div class="note">Выбери одно. Работает во всех боевых режимах: Бой, Миссии, Устранение. Заряды пополняются в начале каждого вылета.</div><div id="hg-specials"></div>
     <h3>МОДУЛИ <span id="hg-modcount" style="color:var(--acc2)"></span></h3><div id="hg-mods"></div>
     <div class="row2"><button class="pbtn" data-act="back">ГОТОВО</button></div>
   </div>
@@ -419,7 +420,8 @@ const settings=Object.assign({},DEF_SETTINGS,store.get('id.settings',{}));
 const isMobile=/Android|iPhone|iPad/i.test(navigator.userAgent);
 let firstRun=false;
 if(!settings.quality||!QUALITY[settings.quality]){settings.quality=isMobile?'low':'high';firstRun=true;}
-const profile=Object.assign({drone:'falcon',skin:'blaze',modules:['hacker','rockets','shield'],done:{},bestCombat:0,bestDrift:0,credits:300,up:{},owned:['wasp','falcon','rhino'],weapon:'gun',weapons:['gun']},store.get('id.profile',{}));
+const profile=Object.assign({drone:'falcon',skin:'blaze',modules:['hacker','rockets','shield'],done:{},bestCombat:0,bestDrift:0,credits:300,up:{},owned:['wasp','falcon','rhino'],weapon:'gun',weapons:['gun'],special:'fab',specials:['fab']},store.get('id.profile',{}));
+if(!Array.isArray(profile.specials))profile.specials=['fab'];if(!profile.specials.includes('fab'))profile.specials.push('fab');if(!profile.special)profile.special='fab';
 profile.up=Object.assign({engine:0,armor:0,gun:0,cool:0},profile.up);if(!profile.owned.includes(profile.drone))profile.drone='falcon';
 const saveS=()=>store.set('id.settings',settings), saveP=()=>store.set('id.profile',profile);
 const hasMod=m=>profile.modules.includes(m);
@@ -1663,7 +1665,7 @@ function finishDuel(){
 // ================= БОЙ =================
 const TURRET_POS={m4:[[-20,30],[20,-8],[34,-64]],free:[[-22,40],[24,-6]]};
 function setupCombat(mission){
-  session.wave=0;
+  session.wave=0;setupSpecials();
   if(session.strike){setupStrike(session.strike);if(hasMod('drone'))spawnPet();return;}
   if(mission==='m4'){TURRET_POS.m4.forEach(([x,z],i)=>spawnTurret(x,z,true,i));spawnPanel(0,-HZ+0.5,0);for(let i=0;i<4;i++)spawnEnemyRandom('scout');session.objective='hack';}
   else if(mission==='m3'){session.killTarget=8;for(let i=0;i<4;i++)spawnEnemyRandom(i<3?'scout':'striker');session.spawned=4;}
@@ -2189,7 +2191,7 @@ function updateCombat(dt,rdt){
   P.empCd=Math.max(0,(P.empCd||0)-dt);
   if(inp.emp&&P.alive){if(!hasMod('emp'))toast('Нужен модуль ЭМИ (Ангар)','bad');else if(P.empCd<=0)fireEMP();}
   updateEMPfx(dt);updatePickups(dt);updateCrane(dt);if(session.reveal>0)session.reveal-=dt;
-  if(session.strike)updateStrike(dt);
+  updateSpecials(dt);if(session.strike)updateStrike(dt);
   // цели миссий
   if(session.ended)return;
   const hostileDrones=enemies.filter(e=>e.alive&&e.team==='enemy').length;
@@ -2272,6 +2274,8 @@ const SPECIAL=[
   {k:'grav',name:'Гравибомба',ammo:2,t:'drop',desc:'Стягивает врагов в одну точку и взрывается.'},
   {k:'nuke',name:'Заряд «Малыш»',ammo:1,t:'drop',desc:'Мини-ядерный взрыв на 35 м. Сбрось и улетай!'}
 ];
+const SPPRICE={fab:0,cluster:900,napalm:1000,buster:1200,thermo:1600,kab:1400,atgm:1300,grad:1500,cruise:2200,sticky:800,empb:1400,smoke:500,flares:600,arty:1800,orbit:3500,swarm:2000,shock:1700,seismic:2400,grav:2600,nuke:8000};
+SPECIAL.forEach(s=>s.price=SPPRICE[s.k]);
 const SPMAX=Object.fromEntries(SPECIAL.map(s=>[s.k,s.ammo]));
 let BURNT=null,VMAT=null,SPMAT=null,SPGEO=null;
 function strikeMats(){
@@ -2392,7 +2396,7 @@ function updateVeh(e,dt){
   if(!e.alive){
     if(!e.dead){e.dead=true;e.g.traverse(m=>{if(m.isMesh&&m.material!==e.eyeM&&!(m.material.userData&&m.material.userData.shared))m.material.dispose();if(m.isMesh)m.material=BURNT;});e.smokeT=14;
       if(V.fly){e.falling=true;e.vel.set(rand(-3,3),-2,rand(-3,3));}
-      if(Math.random()<0.4){const c=SPECIAL.filter(s=>(session.spAmmo[s.k]||0)<SPMAX[s.k]&&s.k!=='nuke');if(c.length){const s=c[Math.floor(Math.random()*c.length)];session.spAmmo[s.k]++;toast('ТРОФЕЙ: +1 '+s.name.toUpperCase(),'ok');}}}
+      {const s=curSpecial();if(Math.random()<0.4&&s.k!=='nuke'&&(session.spAmmo[s.k]||0)<SPMAX[s.k]){session.spAmmo[s.k]=(session.spAmmo[s.k]||0)+1;toast('ТРОФЕЙ: +1 '+s.name.toUpperCase(),'ok');}}}
     if(e.falling){e.vel.y-=9.81*dt;e.pos.addScaledVector(e.vel,dt);e.g.rotation.z+=dt*2;e.g.position.copy(e.pos);if(e.pos.y<=1){e.falling=false;e.pos.y=1;e.g.position.y=0.6;explosion(e.pos,1.4);strikeBlast(e.pos,6,80,{});}}
     if(e.smokeT>0){e.smokeT-=dt;if(Math.random()<0.4)smoke.emit(e.pos.x,e.pos.y+0.6,e.pos.z,rand(-0.3,0.3),rand(1,2),rand(-0.3,0.3),0.05,0.05,0.05,0.6,rand(2,3.5),-0.4,1.2,2.5);
       if(Math.random()<0.25)sparks.emit(e.pos.x,e.pos.y+0.4,e.pos.z,rand(-1,1),rand(1,3),rand(-1,1),6,2.2,0.5,0.15,0.4,-1,1);}
@@ -2468,11 +2472,11 @@ function bombImpact(){
   const p=P.pos.clone().setY(P.pos.y-0.3),v=P.vel.clone(),dt=0.04;
   for(let i=0;i<200;i++){v.y-=9.81*dt;p.addScaledVector(v,dt);if(pointBlocked(p))return p;}return p;
 }
-function curSpecial(){return SPECIAL[session.spIdx||0];}
+function curSpecial(){return SPECIAL.find(s=>s.k===profile.special)||SPECIAL[0];}
 function addProj(o){sproj.push(Object.assign({life:8,g:1,v:new V3()},o));}
 function fireSpecialWeapon(){
   const S=curSpecial(),am=session.spAmmo;
-  if(!(am[S.k]>0)){toast(S.name.toUpperCase()+': ПУСТО (Tab/колесо — сменить)','bad');sfx('err');P.spCd=0.4;return;}
+  if(!(am[S.k]>0)){toast(S.name.toUpperCase()+': ЗАРЯДЫ КОНЧИЛИСЬ','bad');sfx('err');P.spCd=0.6;return;}
   am[S.k]--;P.spCd=0.55;
   const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone(),below=P.pos.clone().setY(P.pos.y-0.35),gun=new V3(0,-0.05,-0.2).applyQuaternion(P.q).add(P.pos);
   const drop=(mesh,o)=>{addProj(Object.assign({p:below,v:P.vel.clone(),mesh:spMesh(mesh,mesh==='big'&&S.k==='nuke'?'nuke':'bomb',mesh==='big'?1:1)},o));sfx('beep',null,0.6);};
@@ -2558,8 +2562,7 @@ function updateZones(dt){
   }
 }
 function setupStrike(op){
-  strikeMats();
-  session.spAmmo=Object.assign({},SPMAX);session.spIdx=0;session.structTotal=op.b.length;session.strikeT=0;P.spCd=0;P.flareT=0;
+  session.structTotal=op.b.length;session.strikeT=0;
   const hpK=1+0.12*OPS.indexOf(op),placed=[];
   // здания в дальней части цеха, техника между ними
   for(const k of op.b){const B=BLD[k];const sp=freeSpot(B.w,B.d,-10,HZ-10,placed,Math.max(B.w,B.d)+6)||freeSpot(B.w,B.d,-40,HZ-8,placed,Math.max(B.w,B.d)+3);
@@ -2567,7 +2570,7 @@ function setupStrike(op){
   for(const k of op.v){const sp=freeSpot(VEH[k].size[0]+1,VEH[k].size[2]+1,-20,HZ-8,placed,6)||{x:rand(-30,30),z:rand(10,60)};spawnVeh(k,sp.x,sp.z);}
   for(const k of op.d)spawnEnemyRandom(k);
   centerMsg('ОПЕРАЦИЯ: '+op.name.toUpperCase(),2,true);
-  setTimeout(()=>{if(session.strike===op&&!session.ended)toast('ПКМ — спецсредство · Tab/колесо/1-0 — выбор','ok');},3200);
+  setTimeout(()=>{if(session.strike===op&&!session.ended)toast('ПКМ — '+curSpecial().name.toUpperCase()+' (сменить можно в Ангаре)','ok');},3200);
 }
 function clearStrike(){
   for(const s of structs){disposeObj(s.g);disposeObj(s.shM);}structs.length=0;
@@ -2575,11 +2578,10 @@ function clearStrike(){
   for(const s of sproj)disposeObj(s.mesh);sproj.length=0;for(const m of emiss)disposeObj(m.mesh);emiss.length=0;
   for(const z of szones)if(z.m)disposeObj(z.m);szones.length=0;
 }
-function updateStrike(dt){
-  const op=session.strike;session.strikeT+=dt;
-  // выбор спецсредства
-  if(inp.spNext){const n=SPECIAL.length;session.spIdx=((session.spIdx+inp.spNext)%n+n)%n;inp.spNext=0;sfx('tick');}
-  if(inp.spSel!==undefined){session.spIdx=inp.spSel;inp.spSel=undefined;sfx('tick');}
+// спецоружие из Ангара: работает во всех боевых режимах
+function setupSpecials(){strikeMats();const k=curSpecial().k;session.spAmmo={[k]:SPMAX[k]};P.spCd=0;P.flareT=0;session.gradQ=null;}
+function updateSpecials(dt){
+  if(!session.spAmmo)setupSpecials();
   P.spCd=Math.max(0,(P.spCd||0)-dt);P.flareT=Math.max(0,(P.flareT||0)-dt);
   if(inp.alt&&P.alive&&session.countdown<=0&&P.crashed<=0&&P.spCd<=0&&!session.ended)fireSpecialWeapon();
   // «Град»: ракеты по очереди
@@ -2587,6 +2589,10 @@ function updateStrike(dt){
       const tp=gq.tp.clone().add(_v.set(rand(-5,5),0,rand(-5,5)));const d=tp.sub(gun).normalize();
       addProj({p:gun,v:d.multiplyScalar(55).add(P.vel),g:0.12,mesh:spMesh('rocket','hot'),trail:true,hit:p=>{explosion(p,0.9);strikeBlast(p,4.5,95);}});sfx('rocket',null,0.5);addShake(0.05);}
     if(gq.n<=0)session.gradQ=null;}
+  updateSProj(dt);updateEMiss(dt);updateZones(dt);
+}
+function updateStrike(dt){
+  const op=session.strike;session.strikeT+=dt;
   // здания: щиты, радар, ангар, горящие руины
   const sh=shieldsUp();
   for(const s of structs){
@@ -2603,7 +2609,6 @@ function updateStrike(dt){
         else{if(Math.random()<0.5)spawnEnemyRandom(Math.random()<0.5?'striker':'kamikaze');else{const sp=freeSpot(3,5,-10,HZ-8,[],0);if(sp)spawnVeh('jeep',sp.x,sp.z);}toast('РАДАР ВЫЗВАЛ ПОДКРЕПЛЕНИЕ','bad');}}}}
   }
   for(const e of vehs)updateVeh(e,dt);
-  updateSProj(dt);updateEMiss(dt);updateZones(dt);
   // победа
   if(!session.ended&&structs.length&&structs.every(s=>!s.alive)){
     const first=!(profile.strikeDone||{})[op.id];profile.strikeDone=profile.strikeDone||{};profile.strikeDone[op.id]=true;
@@ -2617,20 +2622,21 @@ function strikeHUD(){
 }
 function specialHUD(){
   const S=curSpecial(),a=session.spAmmo[S.k]||0;
-  return '<div class="mod'+(a<=0||P.spCd>0?' cd':'')+'" style="border-color:#ffd27a;color:#ffd27a">ПКМ '+(session.spIdx+1)+'/20 '+S.name.toUpperCase()+' x'+a+'</div>';
+  return '<div class="mod'+(a<=0||P.spCd>0?' cd':'')+'" style="border-color:#ffd27a;color:#ffd27a">ПКМ '+S.name.toUpperCase()+' x'+a+'</div>';
 }
 function strikeMarkers(mk){
   for(const s of structs)if(s.alive){const pr=Math.max(0,Math.round(s.hp/s.maxHp*100));mk('en',s.top,s.name+' '+pr+'%'+(shieldsUp()&&!s.B.gen?' ЩИТ':''),true);}
   for(const e of vehs)if(e.alive&&e.pos.distanceTo(P.pos)<130)mk('en',e.pos,e.name+' '+Math.round(e.pos.distanceTo(P.pos))+'м',false);
   for(const m of emiss)if(m.home)mk('en',m.p,'РАКЕТА',true);
+}
+function specialMarkers(mk){
   const S=curSpecial();
   if(P.alive&&session.spAmmo[S.k]>0){if(S.t==='drop')mk('edit',bombImpact(),'ПАДЕНИЕ',false);else if(S.t==='aim')mk('edit',aimPoint(),'ЦЕЛЬ',false);}
 }
 function renderStrike(){
   const done=profile.strikeDone||{};
   $('#sk-list').innerHTML=OPS.map((o,i)=>`<div class="card" data-op="${o.id}"><b>${(i+1)+'. '+o.name.toUpperCase()}</b><span class="tag ${done[o.id]?'ok':''}">${done[o.id]?'ПРОЙДЕНО':'НАГРАДА: '+o.cr+' КР'}</span><p>${o.desc}</p><p style="color:#a9b0b8">Здания: ${o.b.map(k=>BLD[k].name.toLowerCase()).join(', ')}. Техника: ${[...new Set(o.v)].map(k=>VEH[k].name.toLowerCase()).join(', ')}.</p></div>`).join('')
-    +`<div class="note">ПКМ (или B) — спецсредство. Tab / колесо мыши / клавиши 1-0 — выбор из 20. Бомбы падают под дрон: смотри на метку ПАДЕНИЕ. Здания почти не пробиваются пушкой — нужны спецсредства или тяжёлое оружие. Подбитая техника иногда оставляет трофей +1 заряд.</div>`
-    +`<div class="note" style="line-height:1.5">${SPECIAL.map((s,i)=>'<b style="color:#ffd27a">'+(i+1)+'. '+s.name+'</b> ×'+s.ammo+' — '+s.desc).join('<br>')}</div>`;
+    +`<div class="note">Спецоружие на ПКМ (или B): сейчас установлено «${curSpecial().name}» ×${curSpecial().ammo}. Купить и выбрать другое — в Ангаре. Бомбы падают под дрон: смотри на метку ПАДЕНИЕ. Здания почти не пробиваются пушкой — нужны спецоружие или тяжёлое оружие. Подбитая техника иногда даёт +1 заряд.</div>`;
 }
 window.__ST={structs,vehs,sproj,szones,emiss,SPECIAL,OPS,fireSpecialWeapon,strikeBlast,aimPoint};
 
@@ -2931,7 +2937,7 @@ function updateHUD(rdt){
     const wk=WEAPONS[profile.weapon]?profile.weapon:'gun';
     let mh='<div class="mod'+(P.overheat?' cd':'')+'" style="border-color:var(--acc2)">ЛКМ '+WEAPONS[wk].name.toUpperCase()+(P.ohT>0?' '+P.ohT.toFixed(1):'')+(wk==='storm'?' 100K/МИН':'')+'</div>';for(const k of profile.modules){const cd=k==='rockets'?P.rocketCd/2.5:k==='shield'?(P.shield>0?0:P.shieldCd/14):k==='emp'?(P.empCd||0)/12:0;
       mh+='<div class="mod'+(cd>0?' cd':'')+'">'+MODULES[k].key+' '+MODULES[k].name.toUpperCase()+(k==='shield'&&P.shield>0?' '+P.shield.toFixed(1):'')+'<i style="width:'+((1-cd)*100)+'%"></i></div>';}
-    if(session.strike)mh+=specialHUD();
+    if(session.spAmmo)mh+=specialHUD();
     if(H.mods.innerHTML!==mh)H.mods.innerHTML=mh;
   }
   // маркеры
@@ -2949,6 +2955,7 @@ function updateHUD(rdt){
       for(const p of pickups)if(p.pos.distanceTo(P.pos)<40)mk(p.type==='hp'?'ht':'edit',p.pos,p.type==='hp'?'+КОРПУС':'+КР',false);
       if(hackTarget&&!hack.active)mk('ht',hackTarget.pos,'ВЗЛОМ',false);
       if(session.strike)strikeMarkers(mk);
+      if(session.spAmmo)specialMarkers(mk);
     }
   }
   for(let i=mkUsed;i<mkPool.length;i++)mkPool[i].style.display='none';
@@ -3031,6 +3038,9 @@ function renderHangar(){
     const tag=sel?'УСТАНОВЛЕНО':own?'':(profile.credits>=w.price?'КУПИТЬ: ':'ЦЕНА: ')+w.price+' КР';
     const ammo='';
     return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<w.price?'lock':''}" data-weapon="${k}"><b>${w.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${w.desc}${ammo}</p></div>`;}).join('');
+  $('#hg-specials').innerHTML=SPECIAL.map(s=>{const own=profile.specials.includes(s.k),sel=profile.special===s.k;
+    const tag=sel?'УСТАНОВЛЕНО':own?'':(profile.credits>=s.price?'КУПИТЬ: ':'ЦЕНА: ')+s.price+' КР';
+    return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<s.price?'lock':''}" data-special="${s.k}"><b>${s.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${s.desc} Зарядов на вылет: ${s.ammo}.</p></div>`;}).join('');
 }
 // секретный промокод: в коде хранится только отпечаток, а не сам код
 function usePromo(){
@@ -3085,7 +3095,10 @@ let lastHover=null;
 $('#menu').addEventListener('mouseover',e=>{const b=e.target.closest('.btn,.card,.skin,.pbtn');if(b&&b!==lastHover){lastHover=b;sfx('tick');}});
 $('#menu').addEventListener('click',e=>{
   initAudio();if(e.target.closest('.btn,.card,.skin,.pbtn'))sfx('beep');
-  const t=e.target.closest('[data-act],[data-drone],[data-skin],[data-mod],[data-mission],[data-up],[data-track],[data-weapon],[data-op]');if(!t)return;
+  const t=e.target.closest('[data-act],[data-drone],[data-skin],[data-mod],[data-mission],[data-up],[data-track],[data-weapon],[data-op],[data-special]');if(!t)return;
+  if(t.dataset.special){const k=t.dataset.special,s=SPECIAL.find(x=>x.k===k);
+    if(!profile.specials.includes(k)){if(profile.credits<s.price){toastMenu('Не хватает кредитов: нужно '+s.price);return;}profile.credits-=s.price;profile.specials.push(k);sfx('buy');}
+    profile.special=k;saveP();renderHangar();return;}
   if(t.dataset.weapon){const k=t.dataset.weapon,w=WEAPONS[k];
     if(!profile.weapons.includes(k)){if(profile.credits<w.price){toastMenu('Не хватает кредитов: нужно '+w.price);return;}profile.credits-=w.price;profile.weapons.push(k);sfx('buy');}
     profile.weapon=k;saveP();renderHangar();return;}
