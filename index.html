@@ -375,7 +375,7 @@ const MODULES={
 const MOD_SLOTS=3;
 const MISSIONS=[
   {id:'m1',name:'Первый круг',desc:'Пройди круг стандартной трассы быстрее 32 секунд.',reward:'ice',mode:'race',lapT:32},
-  {id:'m2',name:'Ржавый кубок',desc:'Состязание против трёх пилотов на 2 круга. Нужно финишировать первым.',reward:'toxic',mode:'duel',laps:2,botK:0.74},
+  {id:'m2',name:'Ржавый кубок',desc:'Состязание против трёх пилотов на 2 круга. Нужно финишировать первым.',reward:'toxic',mode:'duel',laps:2,botK:0.5},
   {id:'m3',name:'Зачистка цеха',desc:'Уничтожь 8 дронов охраны.',reward:'chrome',mode:'combat'},
   {id:'m4',name:'Тихий взлом',desc:'Нужен модуль Хакер. Турели бронированы: взломай все три, чтобы они стреляли по врагам, и добей охрану.',reward:'phantom',mode:'combat',need:'hacker'},
   {id:'m5',name:'Страж цеха',desc:'Босс: огромный дрон СТРАЖ. Дважды поднимает щит. Щит снимается взломом (H) или пропадает сам через 12 с.',reward:'blood',mode:'combat'},
@@ -1094,17 +1094,27 @@ function updateGust(dt){
 }
 function placePlayer(pos,dirVec){
   P.pos.copy(pos);P.prev.copy(pos);P.vel.set(0,0,0);P.w.set(0,0,0);P.heading=Math.atan2(-dirVec.x,-dirVec.z);P.hs=P.heading;gust.set(0,0,0);P.altT=undefined;
-  P.q.setFromAxisAngle(UP,P.heading);P.crashed=0;kThr=0;repairDrone();
+  P.q.setFromAxisAngle(UP,P.heading);P.crashed=0;kThr=0;P.thrA=0;repairDrone();
 }
 const _qT=new THREE.Quaternion(),_qE=new THREE.Quaternion(),_dw=new V3(),_acc=new V3(),_vb=new V3(),_qi=new THREE.Quaternion();
 const rc=(x,ex=0.42)=>x*(1-ex+ex*x*x);
 function stepPlayer(inp,dt){
-  const C=P.cfg,g=9.81,acro=settings.flight==='acro'&&!hack.active;
+  const C=P.cfg,g=9.81,sim=settings.flight==='sim'&&!hack.active,acro=(settings.flight==='acro'||sim)&&!hack.active;
   _v.set(0,1,0).applyQuaternion(P.q);const upY=_v.y;
   let thr=0;P.liftX=0;
   if(P.crashed>0){P.crashed-=dt;thr=0;}
   else{
-    if(acro){_dw.set(-rc(inp.pitch)*C.rate,-rc(inp.yaw)*C.yawRate,-rc(inp.roll)*C.rate);thr=inp.thr;}
+    if(sim){
+      // кривая рейтов как в Betaflight: RC rate 1.0, super rate 0.7, expo 0.2 → до ~670°/с, точно в центре стика
+      const bf=(x,sr)=>{const a=Math.abs(x),xe=x*(a*a*a*0.2+0.8);return THREE.MathUtils.degToRad(200*xe/(1-Math.min(a,0.99)*sr));},kR=C.rate/10.5;
+      _dw.set(-bf(inp.pitch,0.7)*kR,-bf(inp.yaw,0.6)*kR*0.8,-bf(inp.roll,0.7)*kR);thr=inp.thr;}
+    else if(acro){_dw.set(-rc(inp.pitch)*C.rate,-rc(inp.yaw)*C.yawRate,-rc(inp.roll)*C.rate);thr=inp.thr;
+      if(inp.kbThr){
+        // клавиатурный газ: держит вертикальную скорость (0 без нажатий), компенсирует наклон до ~70°; дальше дрон честно теряет высоту
+        const m=P.mot,twEff=C.twr*(0.86+0.14*clamp((P.bat-13.2)/3.6,0,1))*((m[0]+m[1]+m[2]+m[3])/4*0.75+0.25*(deadMotors()?0:1))*(1+0.25*Math.max(0,1-P.pos.y/1.2));
+        const vyT=inp.climb*(inp.climb>0?9:7),aReq=g+clamp((vyT-P.vel.y)*4,-g,2.2*g);
+        thr=upY>0.05?clamp(aReq/(twEff*g*Math.max(upY,0.34)),0,1):0.12;
+        if(P.pos.y<0.4&&inp.climb<=0&&Math.abs(P.vel.y)<0.5)thr=0;}}
     else{
       // крен на скорости сам доворачивает дрон (как настоящий), мышь задаёт цель, а дрон доворачивает с инерцией
       const fsp=Math.hypot(P.vel.x,P.vel.z);
@@ -1115,14 +1125,15 @@ function stepPlayer(inp,dt){
       const mt=THREE.MathUtils.degToRad(C.maxTilt);_e.set(-inp.pitch*mt,P.hs,-inp.roll*mt,'YXZ');_qT.setFromEuler(_e);
       _qE.copy(P.q).invert().multiply(_qT);if(_qE.w<0){_qE.x*=-1;_qE.y*=-1;_qE.z*=-1;_qE.w*=-1;}
       const ang=2*Math.acos(clamp(_qE.w,-1,1)),s=Math.sqrt(Math.max(1-_qE.w*_qE.w,1e-9));
-      _dw.set(_qE.x/s,_qE.y/s,_qE.z/s).multiplyScalar(Math.min(ang*9,C.rate));
+      _dw.set(_qE.x/s,_qE.y/s,_qE.z/s).multiplyScalar(Math.min(ang*7,C.rate*0.6));
       // удержание высоты: без нажатий дрон держит запомненную высоту (раньше его сносило вверх эффектом земли)
-      if(Math.abs(inp.climb)>0.05||P.altT===undefined||!isFinite(P.altT))P.altT=P.pos.y;
+      // цель высоты — точка, где дрон остановится после отпускания (без перелёта вверх)
+      if(Math.abs(inp.climb)>0.05||P.altT===undefined||!isFinite(P.altT))P.altT=P.pos.y+P.vel.y*(P.vel.y>0?0.22:0.2);
       const vyT=Math.abs(inp.climb)>0.05?inp.climb*(inp.climb>0?15:11):clamp((P.altT-P.pos.y)*3,-4,4);
       const geH=1+0.25*Math.max(0,1-P.pos.y/1.2),m=P.mot;
       const twEff=C.twr*(0.86+0.14*clamp((P.bat-13.2)/3.6,0,1))*((m[0]+m[1]+m[2]+m[3])/4*0.75+0.25*(deadMotors()?0:1))*geH;
       // воздушный тормоз: когда отпустил подъём или жмёшь спуск, вертикальный разгон гасится быстрее (меньше перелёта)
-      if(inp.climb<0.05&&P.vel.y>0)P.vel.y*=Math.exp(-dt*(inp.climb<-0.05?5:2));
+      if(inp.climb<0.05&&P.vel.y>0)P.vel.y*=Math.exp(-dt*(inp.climb<-0.05?5:3.5));
       const aReq=g+(vyT-P.vel.y)*(inp.climb>0.05?4.5:3)-gust.y,den=twEff*g*Math.max(upY,0.35);
       // лишняя тяга на подъём идёт строго вверх, а не вперёд: иначе при наклоне дрон резко «газовал» и пролетал ворота
       if(aReq>g){const thrH=clamp(g/den,0,1),need=clamp(aReq/den,0,1);thr=thrH;P.liftX=Math.max(0,need-thrH)*twEff*g;}
@@ -1140,8 +1151,16 @@ function stepPlayer(inp,dt){
   let tw=C.twr*(0.86+0.14*clamp((P.bat-13.2)/3.6,0,1)); // севшая батарея = меньше тяги
   tw*=(P.mot[0]+P.mot[1]+P.mot[2]+P.mot[3])/4*0.75+0.25*(deadMotors()?0:1); // слабые моторы = меньше тяги
   if(inp.boost&&hasMod('boost')&&P.boostE>0&&P.crashed<=0&&session.mode!=='editor'){P.boostE=Math.max(0,P.boostE-dt*0.38);P.boosting=true;
-    if(acro)tw*=1.5;else{_v2.set(0,0,-1).applyQuaternion(P.q);_v2.y=0;if(_v2.lengthSq()>1e-4)P.vel.addScaledVector(_v2.normalize(),16*dt);}}
+    if(acro&&!inp.kbThr)tw*=1.5;else{_v2.set(0,0,-1).applyQuaternion(P.q);_v2.y=0;if(_v2.lengthSq()>1e-4)P.vel.addScaledVector(_v2.normalize(),16*dt);}}
   else{P.boosting=false;P.boostE=Math.min(1,P.boostE+dt*0.14);}
+  if(sim){
+    // реализм: моторы раскручиваются не мгновенно, батарея проседает под нагрузкой, тяга падает с набегающим потоком
+    P.thrA=(P.thrA||0)+(thr-(P.thrA||0))*(1-Math.exp(-dt/(thr>(P.thrA||0)?0.045:0.07)));thr=P.thrA;
+    tw*=1-0.13*thr*thr;
+    const vAx=P.vel.dot(_v);tw*=clamp(1-Math.max(0,vAx)*0.018,0.55,1);
+    // вибрация рамы на газу: мелкая дрожь камеры
+    if(thr>0.15){P.w.x+=rand(-1,1)*thr*0.9*dt*60*0.02;P.w.z+=rand(-1,1)*thr*0.9*dt*60*0.02;}
+  }
   P.thr=thr;
   _acc.copy(_v).multiplyScalar(thr*tw*g*ge);_acc.y-=g;_acc.y+=P.liftX;_acc.add(gust);
   _qi.copy(P.q).invert();_vb.copy(P.vel).applyQuaternion(_qi);const sp=P.vel.length();
@@ -1221,21 +1240,27 @@ document.addEventListener('pointerlockchange',()=>{const locked=document.pointer
   if(!locked&&state==='play'&&wantLock&&!hack.active){pauseGame();}});
 function readPad(){const ps=navigator.getGamepads?navigator.getGamepads():[];for(const p of ps)if(p&&p.connected)return p;return null;}
 function readInput(dt){
-  const acro=settings.flight==='acro',k=keys,ax=(a,b)=>(k[a]?1:0)-(k[b]?1:0),sens=settings.sens,inv=settings.invertY?-1:1;
-  inp.pitch=inp.roll=inp.yaw=inp.climb=inp.yawDelta=0;
+  const sim=settings.flight==='sim',acro=settings.flight==='acro'||sim,k=keys,ax=(a,b)=>(k[a]?1:0)-(k[b]?1:0),sens=settings.sens,inv=settings.invertY?-1:1;
+  inp.pitch=inp.roll=inp.yaw=inp.climb=inp.yawDelta=0;inp.kbThr=false;
   if(settings.invertX)mouseDX=-mouseDX;
   if(acro){
-    kThr=clamp(kThr+ax('KeyW','KeyS')*dt*1.15,0,1);inp.thr=kThr;
-    mStick.x=mStick.x*Math.exp(-dt*14)+mouseDX*0.011*sens;mStick.y=mStick.y*Math.exp(-dt*14)+mouseDY*0.011*sens*inv;
-    inp.yaw=clamp(ax('KeyE','KeyQ')+mStick.x,-1,1);inp.roll=clamp(ax('KeyD','KeyA')+ax('ArrowRight','ArrowLeft'),-1,1);inp.pitch=clamp(ax('ArrowUp','ArrowDown')+mStick.y,-1,1);
+    // ACRO на клавиатуре: W/S и A/D — плавный наклон (скорость вращения), отпустил — дрон остаётся в том же положении, как настоящий.
+    // Газ: Space вверх, C/X/Ctrl вниз; без нажатий газ держит висение с учётом наклона (W больше НЕ газ и не уносит к потолку)
+    const kp=clamp(ax('KeyW','KeyS')+ax('ArrowUp','ArrowDown'),-1,1),kr=clamp(ax('KeyD','KeyA')+ax('ArrowRight','ArrowLeft'),-1,1);
+    kSm.p+=(kp-kSm.p)*(1-Math.exp(-dt*8));kSm.r+=(kr-kSm.r)*(1-Math.exp(-dt*8));
+    mStick.x=mStick.x*Math.exp(-dt*18)+mouseDX*0.0042*sens;mStick.y=mStick.y*Math.exp(-dt*18)+mouseDY*0.0042*sens*inv;
+    inp.yaw=clamp(ax('KeyE','KeyQ')*0.5+mStick.x,-1,1);inp.roll=clamp(kSm.r*0.32,-1,1);inp.pitch=clamp(kSm.p*0.32+mStick.y,-1,1);
+    inp.climb=clamp((k.Space?1:0)-((k.KeyX||k.KeyC||k.ControlLeft)?1:0),-1,1);inp.kbThr=!sim;
+    // СИМУЛЯТОР: газ ручной и остаётся на месте, как стик без пружины. Space/C или колесо мыши — плавно, Z — сброс газа
+    if(sim){kThr=clamp(kThr+inp.climb*dt*0.45-simWheel*0.02,0,1);if(k.KeyZ)kThr=0;simWheel=0;inp.thr=kThr;}
   }else{
     // клавиши нажимаются не рывком, а плавно (как стик)
     const kp=clamp(ax('KeyW','KeyS')+ax('ArrowUp','ArrowDown'),-1,1),kr=clamp(ax('KeyD','KeyA')+ax('ArrowRight','ArrowLeft'),-1,1),ks=1-Math.exp(-dt*(kp?6:9)),ksr=1-Math.exp(-dt*(kr?7:10));
     kSm.p+=(kp-kSm.p)*ks;kSm.r+=(kr-kSm.r)*ksr;if(Math.abs(kSm.p)<0.003)kSm.p=0;if(Math.abs(kSm.r)<0.003)kSm.r=0;
     inp.pitch=kSm.p;inp.roll=kSm.r;
-    inp.yaw=ax('KeyE','KeyQ');inp.yawDelta=mouseDX*0.0022*sens;
+    inp.yaw=ax('KeyE','KeyQ');inp.yawDelta=mouseDX*0.0014*sens;
     // мышь вверх-вниз: наклон камеры (вверх до 25°, вниз до 60°) или высота полёта
-    if(settings.mouseY!=='climb'){camPitch=clamp(camPitch-mouseDY*0.0022*sens*inv,-1.05,0.44);mStick.y*=Math.exp(-dt*8);}
+    if(settings.mouseY!=='climb'){camPitch=clamp(camPitch-mouseDY*0.0014*sens*inv,-1.05,0.44);mStick.y*=Math.exp(-dt*8);}
     else{mStick.y=mStick.y*Math.exp(-dt*5)-mouseDY*0.012*sens*inv;mStick.y=clamp(mStick.y,-1,1);}
     inp.climb=clamp((k.Space?1:0)-((k.KeyX||k.KeyC||k.ControlLeft)?1:0)+mStick.y,-1,1);
   }
@@ -1259,7 +1284,7 @@ function readInput(dt){
     if(ldWait&&gp.buttons.some((x,i)=>bp(i)))dismissLoad();
     if(Math.abs(LY)>0.3||Math.abs(RX)>0.3||Math.abs(RY)>0.3)padActive=true;
     if(padActive){
-      if(acro){inp.thr=clamp((1-thrRaw)/2,0,1);kThr=inp.thr;}else inp.climb=clamp(inp.climb-LY,-1,1);
+      if(acro){inp.thr=clamp((1-thrRaw)/2,0,1);kThr=inp.thr;inp.kbThr=false;}else inp.climb=clamp(inp.climb-LY,-1,1);
       inp.yaw=clamp(inp.yaw+LX,-1,1);inp.pitch=clamp(inp.pitch-RY,-1,1);inp.roll=clamp(inp.roll+RX,-1,1);}
     inp.fire=inp.fire||b(7)||b(5);inp.boost=inp.boost||b(4);inp.rocket=inp.rocket||bp(2);inp.shield=inp.shield||bp(1);inp.hack=inp.hack||bp(0);inp.reset=inp.reset||bp(3);inp.view=inp.view||bp(8);inp.emp=inp.emp||bp(6);
     if(hack.active){if(bp(14))hMv--;if(bp(15))hMv++;const sx=Math.abs(LX)>0.6?Math.sign(LX):Math.abs(RX)>0.6?Math.sign(RX):0;if(sx&&sx!==gpStickX)hMv+=sx;gpStickX=sx;if(bp(0))hOk=true;if(bp(1))hCancel=true;}
@@ -1273,8 +1298,8 @@ function readInput(dt){
   }
   pressed.clear();
 }
-let wheelSteps=0,clickEdge=false,gpStickX=0,camPitch=0;const kSm={p:0,r:0};
-addEventListener('wheel',e=>{if(hack.active)wheelSteps+=Math.sign(e.deltaY);},{passive:true});
+let wheelSteps=0,clickEdge=false,gpStickX=0,camPitch=0,simWheel=0;const kSm={p:0,r:0};
+addEventListener('wheel',e=>{if(hack.active)wheelSteps+=Math.sign(e.deltaY);else if(settings.flight==='sim'&&state==='play')simWheel+=Math.sign(e.deltaY);},{passive:true});
 
 // ================= ЗВУК =================
 let AC=null,master,motor=null;
@@ -1602,7 +1627,12 @@ function updateBots(dt){
   for(const b of bots){
     if(session.countdown>0||b.finished){if(b.finished){b.v*=Math.exp(-dt*0.8);}if(session.countdown>0){spinProps(b.m,20,dt);b.m.group.position.copy(b.pos);continue;}}
     raceCurve.getTangentAt(b.t,_bt);raceCurve.getTangentAt((b.t+6/L)%1,_bt2);
-    const curv=_bt.angleTo(_bt2)/6;const vmax=19*b.sk,vT=Math.min(vmax,Math.sqrt(20*b.sk/Math.max(curv,1e-4)));
+    const curv=_bt.angleTo(_bt2)/6;const vmax=19*b.sk;let vT=Math.min(vmax,Math.sqrt(20*b.sk/Math.max(curv,1e-4)));
+    // «Ржавый кубок»: боты не уходят далеко вперёд, ждут игрока
+    if(session.mission==='m2'&&!b.finished){const bp=botProgress(b),ahead=bp-playerProgress();
+      if(ahead>0.06)vT*=ahead>0.2?0.3:0.6;
+      // на финишной половине последнего круга ржавые моторы сдают, если игрок позади
+      if(bp>race.lapsTarget-0.5&&ahead>-0.02)vT*=0.25;}
     b.v+=clamp(vT-b.v,-40*dt,15*dt);
     b.t+=b.v*dt/L;if(b.t>=1){b.t-=1;b.lap++;}
     if(!b.finished&&b.lap+(b.t-t0)>=race.lapsTarget&&b.lap>=0){b.finished=true;b.ftime=race.t;}
@@ -2431,9 +2461,9 @@ function mk(cls,p,label,clampEdge){
 }
 function updateHUD(rdt){
   const C=P.cfg,speed=P.vel.length();
-  H.mode.textContent=(settings.flight==='acro'?'ACRO':'ANGLE')+(P.crashed>0?'  DISARM':'  ARM');
+  H.mode.textContent=(settings.flight==='sim'?'SIM ACRO':settings.flight==='acro'?'ACRO':'ANGLE')+(P.crashed>0?'  DISARM':'  ARM');
   H.bat.textContent=P.bat.toFixed(1)+'V';H.drone.textContent=C.name.toUpperCase()+(view==='third'?'  ВИД 3':'');
-  H.thrBar.style.height=(P.thr*100)+'%';H.thr.textContent='THR '+Math.round(P.thr*100)+'%';H.spd.textContent=Math.round(speed*3.6)+' км/ч';H.alt.textContent='ALT '+P.pos.y.toFixed(1)+'м';
+  H.thrBar.style.height=(P.thr*100)+'%';H.thr.textContent='THR '+Math.round(P.thr*100)+'%'+(settings.flight==='sim'?'  ВИСЕНИЕ ~'+Math.round(100/(P.cfg.twr*(0.86+0.14*clamp((P.bat-13.2)/3.6,0,1))))+'%':'');H.spd.textContent=Math.round(speed*3.6)+' км/ч';H.alt.textContent='ALT '+P.pos.y.toFixed(1)+'м';
   _e.setFromQuaternion(camera.quaternion,'YXZ');const pxPerRad=innerHeight/THREE.MathUtils.degToRad(camera.fov);
   H.hor.parentElement.style.transform='rotate('+(-_e.z)+'rad) translateY('+(_e.x*pxPerRad)+'px)';
   // занос
@@ -2511,7 +2541,7 @@ function updateCamera(dt){
   if(state==='play'||state==='pause'||state==='result'){
     const sp=P.vel.length();
     if(view==='fpv'&&P.alive){
-      if(settings.flight==='acro'){_tq.setFromAxisAngle(_v.set(1,0,0),THREE.MathUtils.degToRad(settings.tilt));camera.quaternion.copy(P.q).multiply(_tq);}
+      if(settings.flight==='acro'||settings.flight==='sim'){_tq.setFromAxisAngle(_v.set(1,0,0),THREE.MathUtils.degToRad(settings.tilt));camera.quaternion.copy(P.q).multiply(_tq);}
       else{_e.setFromQuaternion(P.q,'YXZ');_e.set(_e.x*0.32+THREE.MathUtils.degToRad(settings.tilt*0.25)+camPitch,_e.y,_e.z*0.55,'YXZ');camera.quaternion.setFromEuler(_e);}
       const a=(0.0015+sp*0.00018+P.thr*0.0018)+shake*0.05;
       _e.set(noise1(gameTime*23)*a,noise1(gameTime*19+3)*a,noise1(gameTime*29+7)*a*0.6,'XYZ');_q.setFromEuler(_e);camera.quaternion.multiply(_q);
@@ -2600,7 +2630,8 @@ function renderSettings(){
   <div class="set">Качество графики<select data-set="quality">${QORDER.map(k=>`<option value="${k}" ${q.quality===k?'selected':''}>${QUALITY[k].name}</option>`).join('')}</select></div>
   <div class="set">Авто-снижение при низком FPS<input type="checkbox" data-set="autoQ" ${q.autoQ?'checked':''}></div>
   <div class="set">Время суток<select data-set="tod"><option value="day" ${q.tod!=='night'?'selected':''}>Закат</option><option value="night" ${q.tod==='night'?'selected':''}>Ночь, гроза и дождь</option></select></div>
-  <div class="set">Режим полёта<select data-set="flight"><option value="angle" ${q.flight==='angle'?'selected':''}>Со стабилизацией</option><option value="acro" ${q.flight==='acro'?'selected':''}>Acro (как настоящий FPV)</option></select></div>
+  <div class="set">Режим полёта<select data-set="flight"><option value="angle" ${q.flight==='angle'?'selected':''}>Со стабилизацией</option><option value="acro" ${q.flight==='acro'?'selected':''}>Без стабилизации (высоту держит сам)</option><option value="sim" ${q.flight==='sim'?'selected':''}>Симулятор: как настоящий FPV-дрон</option></select></div>
+  <div class="note">${q.flight==='sim'?'Симулятор: газ ручной и остаётся где поставил (Space прибавить, C убавить, колесо мыши, Z сброс). W/S A/D наклон, мышь — стик. Отпустил — дрон не выравнивается.':q.flight==='acro'?'Без стабилизации: W/S A/D наклоняют дрон, отпустил — наклон сохраняется. Space вверх, C вниз, без нажатий высота держится.':'Со стабилизацией: дрон сам выравнивается и держит высоту.'}</div>
   <div class="set">Наклон камеры: <span id="sv-tilt">${q.tilt}°</span><input type="range" min="0" max="45" value="${q.tilt}" data-set="tilt"></div>
   <div class="set">Угол обзора: <span id="sv-fov">${q.fov}°</span><input type="range" min="80" max="125" value="${q.fov}" data-set="fov"></div>
   <div class="set">Чувствительность мыши: <span id="sv-sens">${q.sens}</span><input type="range" min="0.3" max="2.5" step="0.1" value="${q.sens}" data-set="sens"></div>
@@ -2616,7 +2647,7 @@ function renderSettings(){
 }
 $('#menu').addEventListener('change',e=>{const k=e.target.dataset.set;if(!k)return;
   const v=e.target.type==='checkbox'?e.target.checked:e.target.type==='range'?parseFloat(e.target.value):e.target.value;settings[k]=v;saveS();
-  if(k==='quality'){applyQuality();fpsHist.length=0;}if(k==='tod')applyTOD(v);if(k==='flight'){P.heading=new THREE.Euler().setFromQuaternion(P.q,'YXZ').y;}});
+  if(k==='quality'){applyQuality();fpsHist.length=0;}if(k==='tod')applyTOD(v);if(k==='flight'){P.heading=new THREE.Euler().setFromQuaternion(P.q,'YXZ').y;renderSettings();}});
 $('#menu').addEventListener('input',e=>{const k=e.target.dataset.set;if(!k||e.target.type!=='range')return;const v=parseFloat(e.target.value);settings[k]=v;
   const s=$('#sv-'+k);if(s)s.textContent=k==='volume'||k==='music'?Math.round(v*100)+'%':k==='sens'?v:v+'°';saveS();});
 let lastHover=null;
