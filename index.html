@@ -228,7 +228,7 @@ h3{font-size:15px;letter-spacing:.2em;color:var(--dim);margin:16px 0 8px;font-we
     <button class="btn" data-act="duel">Состязание<small>Против трёх пилотов, 3 круга</small></button>
     <button class="btn" data-act="combat">Бой<small>Волны охраны, турели, камеры, кран; каждая 5-я волна — босс</small></button>
     <button class="btn" data-act="drift">Дрифт<small>90 секунд: набери максимум очков заноса</small></button>
-    <button class="btn" data-act="missions">Миссии<small>7 заданий, за них открываются скины</small></button>
+    <button class="btn" data-act="missions">Миссии<small>15 испытаний: скины и кредиты</small></button>
     <button class="btn" data-act="hangar">Ангар<small>Дроны, улучшения, скины и модули · <span id="mm-cr" style="color:#ffd27a"></span></small></button>
     <button class="btn" data-act="tracks">Трассы<small>Три трассы и редактор своих</small></button>
     <button class="btn" data-act="settings">Настройки</button>
@@ -374,14 +374,24 @@ const MODULES={
 };
 const MOD_SLOTS=3;
 const MISSIONS=[
-  {id:'m1',name:'Первый круг',desc:'Пройди круг стандартной трассы быстрее 32 секунд.',reward:'ice',mode:'race'},
-  {id:'m2',name:'Ржавый кубок',desc:'Состязание против трёх пилотов на 2 круга. Нужно финишировать первым.',reward:'toxic',mode:'duel'},
+  {id:'m1',name:'Первый круг',desc:'Пройди круг стандартной трассы быстрее 32 секунд.',reward:'ice',mode:'race',lapT:32},
+  {id:'m2',name:'Ржавый кубок',desc:'Состязание против трёх пилотов на 2 круга. Нужно финишировать первым.',reward:'toxic',mode:'duel',laps:2,botK:0.74},
   {id:'m3',name:'Зачистка цеха',desc:'Уничтожь 8 дронов охраны.',reward:'chrome',mode:'combat'},
   {id:'m4',name:'Тихий взлом',desc:'Нужен модуль Хакер. Турели бронированы: взломай все три, чтобы они стреляли по врагам, и добей охрану.',reward:'phantom',mode:'combat',need:'hacker'},
   {id:'m5',name:'Страж цеха',desc:'Босс: огромный дрон СТРАЖ. Дважды поднимает щит. Щит снимается взломом (H) или пропадает сам через 12 с.',reward:'blood',mode:'combat'},
-  {id:'m6',name:'Ночной дрифт',desc:'Ночь и гроза. Набери 1000 очков заноса за 90 секунд.',reward:'neon',mode:'drift'},
-  {id:'m7',name:'Слепая зона',desc:'Нужен модуль Хакер. Взломай 3 камеры, кран и щиток питания.',reward:'camo',mode:'combat',need:'hacker'}
+  {id:'m6',name:'Ночной дрифт',desc:'Ночь и гроза. Набери 1000 очков заноса за 90 секунд.',reward:'neon',mode:'drift',drift:1000,night:true},
+  {id:'m7',name:'Слепая зона',desc:'Нужен модуль Хакер. Взломай 3 камеры, кран и щиток питания.',reward:'camo',mode:'combat',need:'hacker'},
+  // новые испытания: награда кредитами
+  {id:'m8',name:'Крыша мира',desc:'Трасса «Под крышей»: пройди круг быстрее 30 секунд.',cr:400,mode:'race',track:'roof',lapT:30},
+  {id:'m9',name:'Змейка',desc:'Трасса «Слалом колонн»: пройди круг быстрее 46 секунд, не задевая колонны.',cr:450,mode:'race',track:'slalom',lapT:46},
+  {id:'m10',name:'Кубок под крышей',desc:'Состязание на трассе «Под крышей», 3 круга. Пилоты здесь злее — нужно первое место.',cr:700,mode:'duel',track:'roof',laps:3,botK:0.82},
+  {id:'m11',name:'Рой камикадзе',desc:'На тебя летят только камикадзе. Сбей 12 штук, пока они не сбили тебя.',cr:500,mode:'combat',hunt:'kamikaze',kills:12},
+  {id:'m12',name:'Охота на снайперов',desc:'В цехе засели 4 снайпера. Найди и уничтожь всех. Уходи с красного луча!',cr:600,mode:'combat',hunt:'sniper',kills:4},
+  {id:'m13',name:'Продержись',desc:'Волны охраны без остановки. Продержись 120 секунд.',cr:800,mode:'combat',survive:120},
+  {id:'m14',name:'Мастер заноса',desc:'Днём, без дождя. Набери 2500 очков заноса за 90 секунд.',cr:500,mode:'drift',drift:2500},
+  {id:'m15',name:'Ночная гонка',desc:'Ночь и гроза на стандартной трассе. Круг быстрее 34 секунд.',cr:450,mode:'race',lapT:34,night:true}
 ];
+const curMission=()=>session&&session.mission?MISSIONS.find(m=>m.id===session.mission):null;
 const ENEMY={
   scout:{name:'СКАУТ',frame:'wasp',scale:3.2,hp:30,speed:20,acc:26,rate:0.6,dmg:5,score:100,stages:3},
   striker:{name:'ШТУРМОВИК',frame:'falcon',scale:3.8,hp:65,speed:15,acc:20,rate:0.45,dmg:7,score:200,stages:4},
@@ -407,7 +417,7 @@ const profile=Object.assign({drone:'falcon',skin:'blaze',modules:['hacker','rock
 profile.up=Object.assign({engine:0,armor:0,gun:0,cool:0},profile.up);if(!profile.owned.includes(profile.drone))profile.drone='falcon';
 const saveS=()=>store.set('id.settings',settings), saveP=()=>store.set('id.profile',profile);
 const hasMod=m=>profile.modules.includes(m);
-function skinUnlocked(k){const u=SKINS[k].unlock;if(!u)return true;if(u==='all')return MISSIONS.every(m=>profile.done[m.id]);return !!profile.done[u];}
+function skinUnlocked(k){const u=SKINS[k].unlock;if(!u)return true;if(u==='all')return MISSIONS.filter(m=>m.reward).every(m=>profile.done[m.id]);return !!profile.done[u];}
 
 // ================= РЕНДЕР =================
 const canvas=$('#gl');
@@ -904,9 +914,9 @@ function buildBolts(){
   for(let i=0;i<BOLT_MAX;i++){boltIM.setColorAt(i,new THREE.Color(0,0,0));_m.makeScale(0,0,0);boltIM.setMatrixAt(i,_m);bolts.push({on:false,p:new V3(),v:new V3(),life:0,team:'',dmg:0,col:new THREE.Color(),len:1.6,r:0.05});}
   fxGroup.add(boltIM);
 }
-function fireBolt(p,dir,speed,team,dmg,col,len=1.8){
-  const b=bolts.find(b=>!b.on);if(!b)return;b.on=true;b.p.copy(p);b.v.copy(dir).normalize().multiplyScalar(speed);b.life=1.6;b.team=team;b.dmg=dmg;b.col.setRGB(...col);b.len=len;
-  b.w=team==='player'?0.45:0.7;b.wz=false;b.age=0;
+function fireBolt(p,dir,speed,team,dmg,col,len=1.8,life=1.6,stun=0,w=0){
+  const b=bolts.find(b=>!b.on);if(!b)return;b.on=true;b.p.copy(p);b.v.copy(dir).normalize().multiplyScalar(speed);b.life=life;b.team=team;b.dmg=dmg;b.col.setRGB(...col);b.len=len;
+  b.w=w||(team==='player'?0.45:0.7);b.wz=false;b.age=0;b.stun=stun;
 }
 // вспышка у ствола
 let muzzle=null,muzzleT=0;
@@ -986,10 +996,10 @@ function setTrack(t){
     const filmM={uniforms:{uTime:{value:0},uOn:{value:0},uCol:{value:new THREE.Color()}},dispose(){}};
     const top=GATE_R+0.15;
     if(c.y>14){const h=HY-(c.y+top);if(h>0.2){const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,h,8),M.dark);pole.position.set(0,top+h/2,0);grp.add(pole);
-        addCapCol(new V3(c.x,c.y+top,c.z),new V3(c.x,HY,c.z),0.1,'gate');}}
+        }}
     else if(c.y-top>0.3){const h=c.y-top;const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.12,h,10),M.dark);pole.position.set(0,-top-h/2,0);pole.castShadow=true;grp.add(pole);
       const base=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.25,1.2),M.hazard);base.position.set(0,-c.y+0.12,0);base.castShadow=true;grp.add(base);
-      addCapCol(new V3(c.x,0,c.z),new V3(c.x,c.y-top,c.z),0.14,'gate');}
+      }
     trackGroup.add(grp);
     gates.push({i,c,n,yaw:d[3],R:GATE_R,tube:0.3,grp,ringM,filmM});
   });
@@ -1037,7 +1047,7 @@ function collideSphere(p,v,r,useGates,rest=0.28,fric=0.82){
     const t=clamp(((p.x-c.a.x)*c.ab.x+(p.y-c.a.y)*c.ab.y+(p.z-c.a.z)*c.ab.z)/c.l2,0,1);
     const dx=p.x-(c.a.x+c.ab.x*t),dy=p.y-(c.a.y+c.ab.y*t),dz=p.z-(c.a.z+c.ab.z*t),d=Math.hypot(dx,dy,dz),rr=c.r+r;
     if(d<rr&&d>1e-6)contact(p,v,dx/d,dy/d,dz/d,rr-d,rest,fric);}
-  if(useGates&&gatesActive)for(const g of gates){
+  if(false&&useGates&&gatesActive)for(const g of gates){ // рамки ворот больше не твёрдые: сквозь них можно пролетать
     _v.subVectors(p,g.c);if(_v.lengthSq()>(g.R+1)*(g.R+1))continue;
     const vz=_v.dot(g.n);_v2.copy(_v).addScaledVector(g.n,-vz);const rr=_v2.length();if(rr<1e-4)continue;
     _v2.multiplyScalar(g.R/rr);_v3.subVectors(_v,_v2);const d=_v3.length(),lim=g.tube+r;
@@ -1472,14 +1482,15 @@ function startMode(mode,opts={}){
   initAudio();endHack(null,true);clearCombat();clearBots();
   session={mode,mission:opts.mission||null,opts,time:0,countdown:mode==='editor'?0:3,kills:0,killTarget:0,spawned:0,wave:0,score:0,ended:false,deadT:0,credits:0,reveal:0,hacked:0,hackedKinds:{},boss:null,timeLimit:mode==='drift'?90:0};
   lastStart={mode,opts};view='fpv';driftTotal=0;driftAcc=0;camPitch=0;photoMode=false;$('#hud').style.visibility='visible';$('#hackwin').style.visibility='visible';
-  const wantTOD=opts.mission==='m6'?'night':settings.tod;if(wantTOD!==curTOD)applyTOD(wantTOD);
+  const MS=opts.mission?MISSIONS.find(m=>m.id===opts.mission):null;
+  const wantTOD=MS&&MS.night?'night':MS&&MS.drift?'day':settings.tod;if(wantTOD!==curTOD)applyTOD(wantTOD);
   if(mode==='race'||mode==='duel'||mode==='editor'){
-    const td=opts.mission?DEFAULT_TRACK:(trackData||DEFAULT_TRACK);if(encodeTrack(td)!==trackCode)setTrack(td);
+    const td=MS?(MS.track?TRACKS[MS.track].data:DEFAULT_TRACK):(trackData||DEFAULT_TRACK);if(encodeTrack(td)!==trackCode)setTrack(td);
     trackGroup.visible=true;gatesActive=true;
   }else{trackGroup.visible=false;gatesActive=false;}
   showEditLine(mode==='editor');
   rebuildPlayer();P.maxHp=P.cfg.hp;P.hp=P.maxHp;P.alive=true;P.heat=0;P.overheat=false;P.shield=0;P.shieldCd=0;P.rocketCd=0;P.empCd=0;P.ohT=0;P.salvo=null;P.hcd=0;P.spin=0;P.fireCd=0;P.boostE=1;P.bat=16.8;
-  Object.assign(race,{next:0,lapRunning:false,laps:0,lapsTarget:mode==='duel'?(opts.mission==='m2'?2:3):0,t:0,lapStart:0,rec:[],recNext:0,lastGate:-1,lastLap:null,finished:false});
+  Object.assign(race,{next:0,lapRunning:false,laps:0,lapsTarget:mode==='duel'?(MS&&MS.laps||3):0,t:0,lapStart:0,rec:[],recNext:0,lastGate:-1,lastLap:null,finished:false});
   race.best=store.get('id.best.'+trackCode,null);
   ghost.frames=store.get('id.ghost.'+trackCode,null);ghost.idx=0;
   if(!ghost.model){const gm=buildDroneModel('falcon',SKINS.carbon,1.5);const gmat=new THREE.MeshBasicMaterial({color:new THREE.Color(0.3,1.3,2.4),transparent:true,opacity:0.32,blending:THREE.AdditiveBlending,depthWrite:false});gmat.userData.shared=true;
@@ -1511,8 +1522,10 @@ function endSession(success,title,lines){
   let extra='';
   if(session.mode==='combat')addCredits(session.score/10);
   if(success&&session.mission){const m=MISSIONS.find(x=>x.id===session.mission);
-    if(m&&!profile.done[m.id]){profile.done[m.id]=true;addCredits(250);extra='<div style="color:var(--ok);margin-top:8px">Открыт скин: '+SKINS[m.reward].name+'</div>';
-      if(MISSIONS.every(x=>profile.done[x.id]))extra+='<div style="color:var(--ok)">Все миссии пройдены. Открыт скин: Золото</div>';}
+    if(m&&!profile.done[m.id]){profile.done[m.id]=true;
+      if(m.reward){addCredits(250);extra='<div style="color:var(--ok);margin-top:8px">Открыт скин: '+SKINS[m.reward].name+'</div>';
+        if(MISSIONS.filter(x=>x.reward).every(x=>profile.done[x.id]))extra+='<div style="color:var(--ok)">Все скин-миссии пройдены. Открыт скин: Золото</div>';}
+      else{addCredits(m.cr||300);extra='<div style="color:var(--ok);margin-top:8px">Испытание пройдено впервые</div>';}}
     else addCredits(60);}
   if(driftAcc>15){driftTotal+=Math.round(driftAcc);driftAcc=0;}
   extra+='<div style="color:#ffd27a;margin-top:8px">Кредиты: +'+(session.credits||0)+'   ·   всего '+profile.credits+'</div>';
@@ -1568,18 +1581,18 @@ function lapDone(){
     toast(prev==null?'КРУГ ЗАПИСАН. ПРИЗРАК ГОТОВ':'НОВЫЙ ЛУЧШИЙ КРУГ  -'+(prev-lt).toFixed(2),'ok');}
   else toast('КРУГ '+fmt(lt)+'   +'+(lt-prev).toFixed(2));
   centerMsg(fmt(lt),1.4,true);sfx('lap');
-  if(session.mission==='m1'&&lt<=32){race.finished=true;endSession(true,'МИССИЯ ВЫПОЛНЕНА',['Круг: '+fmt(lt),'Цель: быстрее 00:32.00']);}
+  {const M=curMission();if(M&&M.lapT&&lt<=M.lapT){race.finished=true;endSession(true,'МИССИЯ ВЫПОЛНЕНА',['Круг: '+fmt(lt),'Цель: быстрее '+fmt(M.lapT)]);}}
   if(session.mode==='duel'&&race.laps>=race.lapsTarget){race.finished=true;finishDuel();}
 }
 function playerProgress(){const n=gates.length;if(!race.lapRunning)return -0.02;const passed=race.next===0?n:race.next;
   const g=gates[race.next],prevG=gates[(race.next-1+n)%n],seg=Math.max(g.c.distanceTo(prevG.c),1);return race.laps+(passed-1+clamp(1-P.pos.distanceTo(g.c)/seg,0,1))/n+1/n;}
 
 // ================= БОТЫ =================
-const BOT_DEF=[{name:'RAZOR',skin:'toxic',sk:0.9},{name:'МИРА',skin:'ice',sk:0.96},{name:'ГВОЗДЬ',skin:'gold',sk:1.0}];
+const BOT_DEF=[{name:'RAZOR',skin:'toxic',sk:0.8},{name:'МИРА',skin:'ice',sk:0.87},{name:'ГВОЗДЬ',skin:'gold',sk:0.94}];
 function spawnBots(){
   if(!raceCurve)return;const n=gates.length,t0=1/(3*n);
   BOT_DEF.forEach((d,k)=>{const m=buildDroneModel(k===2?'wasp':'falcon',SKINS[d.skin],1.25);dyn.add(m.group);
-    bots.push({name:d.name,m,t:1-0.006*(k+1)+t0*0,lap:-1,v:0,sk:d.sk*(session.mission==='m2'?0.94:1),off:(k-1)*0.9,vel:new V3(),pos:new V3(),q:new THREE.Quaternion(),finished:false,ftime:0,wob:Math.random()*10});});
+    bots.push({name:d.name,m,t:1-0.006*(k+1)+t0*0,lap:-1,v:0,sk:d.sk*((curMission()||{}).botK||1),off:(k-1)*0.9,vel:new V3(),pos:new V3(),q:new THREE.Quaternion(),finished:false,ftime:0,wob:Math.random()*10});});
   bots.forEach(b=>{raceCurve.getPointAt(b.t,b.pos);});
 }
 function clearBots(){for(const b of bots)disposeObj(b.m.group);bots.length=0;}
@@ -1589,7 +1602,7 @@ function updateBots(dt){
   for(const b of bots){
     if(session.countdown>0||b.finished){if(b.finished){b.v*=Math.exp(-dt*0.8);}if(session.countdown>0){spinProps(b.m,20,dt);b.m.group.position.copy(b.pos);continue;}}
     raceCurve.getTangentAt(b.t,_bt);raceCurve.getTangentAt((b.t+6/L)%1,_bt2);
-    const curv=_bt.angleTo(_bt2)/6;const vmax=22*b.sk,vT=Math.min(vmax,Math.sqrt(20*b.sk/Math.max(curv,1e-4)));
+    const curv=_bt.angleTo(_bt2)/6;const vmax=19*b.sk,vT=Math.min(vmax,Math.sqrt(20*b.sk/Math.max(curv,1e-4)));
     b.v+=clamp(vT-b.v,-40*dt,15*dt);
     b.t+=b.v*dt/L;if(b.t>=1){b.t-=1;b.lap++;}
     if(!b.finished&&b.lap+(b.t-t0)>=race.lapsTarget&&b.lap>=0){b.finished=true;b.ftime=race.t;}
@@ -1605,7 +1618,7 @@ function botProgress(b){const n=gates.length,t0=1/(3*n);return b.lap+(b.t-t0)+1/
 function finishDuel(){
   const place=1+bots.filter(b=>b.finished).length;addCredits([200,120,70,30][place-1]||30);
   const lines=['Место: '+place+' из 4','Время: '+fmt(race.t),'Лучший круг: '+fmt(race.best)];
-  if(session.mission==='m2'){endSession(place===1,place===1?'ПОБЕДА':'НЕ ПЕРВОЕ МЕСТО',lines);}
+  if(session.mission){endSession(place===1,place===1?'ПОБЕДА':'НЕ ПЕРВОЕ МЕСТО',lines);}
   else endSession(place===1,place===1?'ПОБЕДА':'ФИНИШ',lines);
 }
 
@@ -1617,7 +1630,10 @@ function setupCombat(mission){
   else if(mission==='m3'){session.killTarget=8;for(let i=0;i<4;i++)spawnEnemyRandom(i<3?'scout':'striker');session.spawned=4;}
   else if(mission==='m5'){session.boss=spawnBoss(new V3(0,13,45));spawnEnemyRandom('scout');spawnEnemyRandom('scout');spawnPanel(-HX+0.5,10,Math.PI/2);}
   else if(mission==='m7'){CAM_POS.forEach((c,i)=>spawnCam(...c,i));spawnCraneTerm();spawnPanel(0,-HZ+0.5,0);for(let i=0;i<3;i++)spawnEnemyRandom(i?'scout':'striker');session.spawned=3;}
-  else{TURRET_POS.free.forEach(([x,z],i)=>spawnTurret(x,z,false,i));spawnPanel(0,-HZ+0.5,0);spawnPanel(-HX+0.5,10,Math.PI/2);CAM_POS.slice(0,2).forEach((c,i)=>spawnCam(...c,i));spawnCraneTerm();nextWave();}
+  else if(curMission()&&curMission().hunt){const M=curMission();session.killTarget=M.kills;session.huntKills=0;
+    const n=M.hunt==='sniper'?M.kills:4;for(let i=0;i<n;i++)spawnEnemyRandom(M.hunt);session.spawned=n;
+    if(M.hunt==='sniper')for(let i=0;i<2;i++)spawnEnemyRandom('scout');}
+  else{if(curMission()&&curMission().survive)session.surviveT=curMission().survive;TURRET_POS.free.forEach(([x,z],i)=>spawnTurret(x,z,false,i));spawnPanel(0,-HZ+0.5,0);spawnPanel(-HX+0.5,10,Math.PI/2);CAM_POS.slice(0,2).forEach((c,i)=>spawnCam(...c,i));spawnCraneTerm();nextWave();}
   if(hasMod('drone'))spawnPet();
 }
 const CAM_POS=[[-HX+0.3,21,-40,Math.PI/2],[HX-0.3,21,40,-Math.PI/2],[0,21,HZ-0.3,Math.PI]];
@@ -1775,7 +1791,7 @@ function damageEntity(e,dmg,by){
     if(e.sight){disposeObj(e.sight);e.sight=null;}
     if(e.kind==='kamikaze')kamiBlast(e.pos,true,true);
     if(e.type==='drone'){if(e.kind==='boss')disposeObj(e.m.group);else makeWreck(e);}else{e.eyeM.color.setRGB(0,0,0);e.yawG.rotation.z=0.5;}
-    if(e.team==='enemy'){session.kills++;session.score+=e.E?e.E.score:300;}
+    if(e.team==='enemy'){session.kills++;if(curMission()&&curMission().hunt===e.kind)session.huntKills=(session.huntKills||0)+1;session.score+=e.E?e.E.score:300;}
     if(hack.active&&hack.target===e)endHack('ЦЕЛЬ УНИЧТОЖЕНА');}
 }
 function damagePlayer(d,impact){
@@ -1792,7 +1808,7 @@ function updateBolts(dt){
     b.life-=dt;_v.copy(b.p);b.p.addScaledVector(b.v,dt);
     let hit=false;
     if(b.team==='player'||b.team==='ally'){
-      for(const e of enemies)if(e.alive&&e.team==='enemy'&&segSphere(_v,b.p,e.pos,e.r+0.25)){damageEntity(e,b.dmg,b.team);burst(b.p,6,[5,2,0.6],6,0.05,0.3,6,1);hit=true;break;}
+      for(const e of enemies)if(e.alive&&e.team==='enemy'&&segSphere(_v,b.p,e.pos,e.r+0.25)){damageEntity(e,b.dmg,b.team);if(b.stun&&e.alive)e.stun=Math.max(e.stun||0,e.kind==='boss'?b.stun*0.3:b.stun);burst(b.p,6,[5,2,0.6],6,0.05,0.3,6,1);hit=true;break;}
       if(!hit)for(const t of turrets)if(t.alive&&t.team==='enemy'&&segSphere(_v,b.p,t.pos,1.1)){damageEntity(t,b.dmg,b.team);burst(b.p,6,[5,2,0.6],6,0.05,0.3,6,1);hit=true;break;}
     }else{
       if(P.alive&&!b.wz){// пуля просвистела рядом
@@ -1828,7 +1844,7 @@ function updateRockets(dt){
     else{const sp=Math.min(r.v.length()+60*dt,62);
       if(r.target&&r.target.alive){_v.subVectors(r.target.pos,r.p).normalize();_v2.copy(r.v).normalize();_v2.lerp(_v,1-Math.exp(-dt*4)).normalize();r.v.copy(_v2).multiplyScalar(sp);}else r.v.setLength(sp);}
     _v3.copy(r.p);r.p.addScaledVector(r.v,dt);
-    if(r.plasma){for(let k=0;k<2;k++)sparks.emit(r.p.x,r.p.y,r.p.z,rand(-1.5,1.5),rand(-1.5,1.5),rand(-1.5,1.5),1.2,3,8,0.1,0.25,0,2);}
+    if(r.plasma){const pc=r.pc||[1.2,3,8];for(let k=0;k<2;k++)sparks.emit(r.p.x,r.p.y,r.p.z,rand(-1.5,1.5),rand(-1.5,1.5),rand(-1.5,1.5),pc[0],pc[1],pc[2],0.1*(r.big||1),0.25,0,2);}
     else if(r.gren){if(Math.random()<0.5)smoke.emit(r.p.x,r.p.y,r.p.z,0,0.2,0,0.12,0.12,0.12,0.1,0.6,-0.2,1,3);r.mesh.rotation.x+=dt*14;}
     else{if(!r.storm||Math.random()<0.3)smoke.emit(r.p.x,r.p.y,r.p.z,rand(-0.4,0.4),rand(-0.4,0.4),rand(-0.4,0.4),0.14,0.13,0.12,0.25,1.2,-0.3,1,3);
       if(!r.storm||Math.random()<0.5)sparks.emit(r.p.x,r.p.y,r.p.z,-r.v.x*0.05,-r.v.y*0.05,-r.v.z*0.05,6,2.5,0.6,0.18,0.12,0,0);}
@@ -1836,9 +1852,9 @@ function updateRockets(dt){
     let boom=r.life<=0||pointBlocked(r.p);
     if(!boom)for(const h of hostiles())if(segSphere(_v3,r.p,h.pos,(h.r||1)+(r.gren?0.5:1))){boom=true;break;}
     if(boom){const R=r.rad||5;
-      if(r.plasma){burst(r.p,50,[1.2,3,8],12,0.06,0.5,0,1.5);flashLight(r.p,[0.4,0.7,1],900,0.35);sfx('boom',r.p,0.7);addShake(clamp(1-r.p.distanceTo(P.pos)/30,0,0.4));}
-      else explosion(r.p,r.small?0.55:r.gren?1.1:0.9);
-      for(const h of hostiles()){const d=h.pos.distanceTo(r.p);if(d<R){damageEntity(h,(r.dmg||80)*(1-d/(R+1)),'player');if(r.plasma&&h.alive)h.stun=Math.max(h.stun||0,1.5);}}
+      if(r.plasma){const pc=r.pc||[1.2,3,8];burst(r.p,50*(r.big||1),pc,12*(r.big||1),0.06,0.5,0,1.5);flashLight(r.p,[pc[0]/8,pc[1]/8,pc[2]/8],900*(r.big||1),0.35);sfx('boom',r.p,0.7);addShake(clamp(1-r.p.distanceTo(P.pos)/30,0,0.4)*(r.big||1));if(r.big>1.5)explosion(r.p,1.3);}
+      else explosion(r.p,r.small?0.55:r.gren?1.1:(r.big||0.9));
+      for(const h of hostiles()){const d=h.pos.distanceTo(r.p);if(d<R){damageEntity(h,(r.dmg||80)*(1-d/(R+1)),'player');if((r.plasma||r.stun)&&h.alive)h.stun=Math.max(h.stun||0,r.stun||1.5);}}
       // свой же взрыв рядом бьёт и по тебе
       if(r.gren||r.plasma){const d=P.pos.distanceTo(r.p);if(d<R*0.8){damagePlayer((r.dmg||80)*0.25*(1-d/R),true);}}
       disposeObj(r.mesh);rockets.splice(i,1);}
@@ -1855,8 +1871,80 @@ const WEAPONS={
   plasma:{name:'Плазма',desc:'Медленный светящийся шар. Попадание — сильный взрыв плазмы, оглушает дронов.',price:1100},
   tesla:{name:'Тесла',desc:'Молния бьёт ближайшего врага в прицеле и перескакивает ещё на 4 цели рядом. Оглушает.',price:1300},
   laser:{name:'Лазер',desc:'Непрерывный луч, пока держишь огонь. Плавит всё на линии, но быстро перегревается.',price:1600},
-  storm:{name:'Металлический шторм',desc:'Скорострельность 100 000 выстрелов в минуту: сплошной рой самонаводящихся микроракет разлетается по всем врагам в прицеле. Чудовищная отдача толкает дрон назад.',price:50000}
+  storm:{name:'Металлический шторм',desc:'Скорострельность 100 000 выстрелов в минуту: сплошной рой самонаводящихся микроракет разлетается по всем врагам в прицеле. Чудовищная отдача толкает дрон назад.',price:50000},
+  // ===== 20 новых стволов (описаны параметрами, стреляет fireGeneric) =====
+  // t: bolt — пули, rocket — ракеты/гранаты/шары, beam — мгновенный луч насквозь, chain — молния по цепочке
+  blaster:{name:'Бластер',desc:'Точные мощные одиночные заряды. Простой и надёжный.',price:300,t:'bolt',cd:0.2,heat:0.06,dmg:1.6,spd:260,col:[1.5,4,8],len:3,snd:'shot',kick:0.4},
+  smg:{name:'Пистолет-пулемёт',desc:'Очень быстрые слабые пули с небольшим разбросом.',price:450,t:'bolt',cd:0.055,heat:0.028,dmg:0.55,spd:230,spr:0.022,col:[6,5,1.5],len:2.5,snd:'minigun',sv:0.5,kick:0.15},
+  rifle:{name:'Штурмовая винтовка',desc:'Очередь из 3 пуль за нажатие. Хорошо на средней дистанции.',price:550,t:'bolt',cd:0.32,heat:0.12,dmg:1.1,spd:270,burst:3,spr:0.008,col:[6,3.5,1],len:3.5,snd:'shot',kick:0.3},
+  sniper:{name:'Снайперская винтовка',desc:'Сверхбыстрая пуля огромного урона. Медленная перезарядка, точный автоприцел на дальней дистанции.',price:1400,t:'bolt',cd:1.1,heat:0.4,dmg:13,spd:700,col:[8,8,10],len:9,w:0.9,rng:180,aimA:0.05,snd:'snipe',kick:1.6,life:0.5},
+  dshot:{name:'Двустволка',desc:'Дуплет: 18 дробин сразу. Разносит всё в упор, сильная отдача.',price:1000,t:'bolt',cd:0.95,heat:0.5,dmg:0.95,n:18,spr:0.11,spd:190,col:[6,3,1],len:2,snd:'shotgun',kick:2.2,push:2.2},
+  flech:{name:'Флешеттник',desc:'5 стальных игл узким пучком. Хорошо пробивает на средней дистанции.',price:750,t:'bolt',cd:0.3,heat:0.16,dmg:1.05,n:5,spr:0.025,spd:320,col:[4,6,7],len:4,snd:'shot',kick:0.6},
+  gatling:{name:'Гатлинг-бластер',desc:'Без раскрутки сразу шпарит плазменными иглами. Быстро греется.',price:1200,t:'bolt',cd:0.04,heat:0.024,dmg:0.75,spr:0.03,spd:240,col:[2,6,3],len:3,snd:'minigun',sv:0.6,kick:0.2},
+  fan:{name:'Веерный лазер',desc:'5 красных лучей горизонтальным веером. Накрывает группы врагов.',price:900,t:'bolt',cd:0.38,heat:0.18,dmg:1.3,n:5,fan:0.09,spd:300,col:[10,1.2,1.2],len:5,snd:'laser',kick:0.4},
+  flamer:{name:'Огнемёт',desc:'Поток огня на 12 метров. Быстро нагревается. Сбивает дронов с толку.',price:1100,t:'bolt',cd:0.035,heat:0.022,dmg:0.5,n:3,spr:0.13,spd:38,life:0.32,col:[8,3,0.5],len:1.2,w:2.2,stun:0.25,snd:'stormroar',sv:0.25,kick:0.05,rng:14},
+  cryo:{name:'Крио-пушка',desc:'Ледяные заряды замораживают дрон на 2 секунды. Урон небольшой.',price:1300,t:'bolt',cd:0.35,heat:0.17,dmg:1.2,spd:150,col:[2,5,9],len:2,w:1.2,stun:2,snd:'plasma',sv:0.5,kick:0.4},
+  rpod:{name:'Ракетная установка',desc:'Тяжёлая неуправляемая ракета, летит прямо. Большой взрыв.',price:1000,t:'rocket',cd:0.75,heat:0.32,dmg:12,rad:5.5,spd:40,home:false,snd:'rocket',kick:0.9},
+  hydra:{name:'Гидра',desc:'4 самонаводящиеся ракеты разом по разным целям в прицеле.',price:1400,t:'rocket',cd:1.2,heat:0.55,dmg:4.5,rad:3.5,n:4,spd:22,home:true,small:true,snd:'rocket',kick:0.6},
+  mortar:{name:'Миномёт',desc:'Мина по высокой дуге: огромный радиус взрыва, бьёт за укрытиями. Не стой рядом.',price:1500,t:'rocket',cd:1.4,heat:0.5,dmg:17,rad:9,spd:26,gren:true,arc:true,snd:'grenade',kick:1.2},
+  cluster:{name:'Кассетник',desc:'Три гранаты веером за выстрел. Ковровый обстрел.',price:1300,t:'rocket',cd:1.0,heat:0.45,dmg:7,rad:5,n:3,spd:32,gren:true,spr:0.12,snd:'grenade',kick:1},
+  ion:{name:'Ионная пушка',desc:'Фиолетовый шар: взрыв оглушает всех вокруг на 3.5 секунды.',price:1200,t:'rocket',cd:0.6,heat:0.3,dmg:5,rad:5,spd:44,plasma:true,pc:[5,1,8],stun:3.5,size:0.15,snd:'plasma',kick:0.6},
+  nova:{name:'Сверхновая',desc:'Медленный гигантский шар звёздной плазмы. Взрыв на полцеха. Перегрев почти сразу.',price:2600,t:'rocket',cd:2,heat:0.85,dmg:26,rad:11,spd:20,plasma:true,pc:[8,5,1.2],big:2,size:0.4,snd:'plasma',kick:2},
+  arc:{name:'Дуговой разрядник',desc:'Быстрые молнии перескакивают по 8 целям. Слабее Теслы, но стреляет втрое чаще.',price:1800,t:'chain',cd:0.25,heat:0.12,dmg:2.2,jumps:8,rng:30,snd:'tesla',kick:0.2},
+  pulse:{name:'Импульсная винтовка',desc:'Зелёный луч мгновенно прошивает всех на линии. Быстрее рельсотрона, но слабее.',price:1600,t:'beam',cd:0.28,heat:0.15,dmg:3.2,col:[1.5,8,2.5],bw:0.02,snd:'rail',sv:0.5,kick:0.4},
+  hrail:{name:'Тяжёлый рельсотрон',desc:'Оранжевый луч чудовищной мощи. Прошивает насквозь даже Стража. Один выстрел — полный перегрев.',price:2800,t:'beam',cd:1.8,heat:0.95,dmg:24,col:[10,4,0.8],bw:0.07,snd:'rail',kick:2.5,push:3},
+  annih:{name:'Аннигилятор',desc:'Залп из 12 самонаводящихся ракет по всем врагам в прицеле. Мощнее Роя ракет.',price:9000,t:'rocket',cd:1.6,heat:0.9,dmg:6,rad:4,n:12,spd:24,home:true,small:true,snd:'rocket',kick:1.2,spread:0.5}
 };
+function wHeat(h){P.heat+=h*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}}
+function fireGeneric(W,S,f,gun,aim){
+  P.fireCd=S.cd;wHeat(S.heat);const D=P.cfg.dmg;
+  sfx(S.snd||'shot',null,S.sv||0.8);addShake(Math.min(0.25,0.03+0.06*(S.kick||0.3)));P.w.x+=rand(0.5,1)*(S.kick||0.3);
+  if(S.push)P.vel.addScaledVector(f,-S.push);
+  if(S.t==='bolt'){
+    const shot=(k)=>{const n=S.n||1;for(let i=0;i<n;i++){const d=f.clone();
+        if(S.fan){_v2.set(1,0,0).applyQuaternion(camera.quaternion);d.addScaledVector(_v2,(i-(n-1)/2)*S.fan);}
+        if(S.spr)d.add(_v3.set(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(S.spr));d.normalize();
+        fireBolt(gun,d,S.spd||240,'player',D*S.dmg,S.col,S.len||2,S.life||1.6,S.stun||0,S.w||0);}
+      if(S.t==='bolt'&&S.snd!=='stormroar')muzzleFlash(gun,f);};
+    shot(0);
+    if(S.burst){for(let k=1;k<S.burst;k++)setTimeout(()=>{if(!P.alive||state!=='play')return;const g2=new V3(0,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);const f2=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone();
+      fireBolt(g2,f2.add(_v3.set(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(S.spr||0)).normalize(),S.spd,'player',D*S.dmg,S.col,S.len,S.life||1.6);sfx(S.snd,null,0.7);muzzleFlash(g2,f2);},k*70);}
+    if(S.snd==='stormroar')for(let k=0;k<3;k++)sparks.emit(gun.x,gun.y,gun.z,f.x*30+rand(-4,4),f.y*30+rand(-4,4),f.z*30+rand(-4,4),8,3,0.6,0.12,0.35,-2,1);
+    else flashLight(gun,[S.col[0]/8,S.col[1]/8,S.col[2]/8],30,0.04);
+    return;}
+  if(S.t==='rocket'){
+    const n=S.n||1;
+    const ts=S.home?hostiles().filter(h=>{const d=_v2.subVectors(h.pos,P.pos);return d.length()<130&&f.angleTo(d)<1.0;}):[];
+    for(let i=0;i<n;i++){let d=f.clone();
+      if(S.gren){const sp=S.spd;if(aim){_v2.subVectors(aim.pos,gun);const t=_v2.length()/sp;_v2.y+=0.5*9.81*t*t;d.copy(_v2).normalize();}else d.y+=S.arc?0.55:0.12;}
+      if(S.spr)d.add(_v3.set(rand(-1,1),rand(-0.3,0.3),rand(-1,1)).multiplyScalar(S.spr));
+      if(S.spread)d.add(_v3.set(rand(-1,1),rand(-0.2,0.8),rand(-1,1)).multiplyScalar(S.spread));
+      if(n>1&&S.home)d.add(_v3.set(rand(-1,1),rand(0,0.6),rand(-1,1)).multiplyScalar(0.35));d.normalize();
+      let mesh;
+      if(S.plasma){mesh=new THREE.Mesh(new THREE.SphereGeometry(S.size||0.16,16,12),new THREE.MeshBasicMaterial({color:new THREE.Color(...S.pc)}));}
+      else if(S.gren){mesh=new THREE.Mesh(new THREE.SphereGeometry(0.07,10,8),new THREE.MeshStandardMaterial({color:0x2b3326,metalness:0.6,roughness:0.5,emissive:new THREE.Color(0.6,0.15,0.05)}));}
+      else{mesh=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.045,S.small?0.3:0.5,8),new THREE.MeshBasicMaterial({color:new THREE.Color(3,2,1)}));mesh.geometry.rotateX(Math.PI/2);}
+      fxGroup.add(mesh);
+      rockets.push({p:gun.clone().addScaledVector(d,0.35),v:d.multiplyScalar(S.spd).add(P.vel),target:S.home?(ts.length?ts[i%ts.length]:aim):null,life:S.plasma?4:S.gren?4:4.5,mesh,dmg:D*S.dmg,rad:S.rad,gren:!!S.gren,plasma:!!S.plasma,pc:S.pc,stun:S.stun,big:S.big,small:!!S.small});}
+    if(S.plasma)flashLight(gun,[S.pc[0]/8,S.pc[1]/8,S.pc[2]/8],70,0.1);else muzzleFlash(gun,f);
+    return;}
+  if(S.t==='beam'){
+    let L=0;const p=new V3();while(L<160){L+=0.6;p.copy(P.pos).addScaledVector(f,L);if(pointBlocked(p))break;}
+    const end=P.pos.clone().addScaledVector(f,L);let hits=0;
+    for(const h of hostiles())if(segSphere(gun,end,h.pos,(h.r||1)+0.35)){damageEntity(h,D*S.dmg,'player');burst(h.pos,16,S.col,8,0.05,0.4,0,2);hits++;}
+    burst(end,18,S.col,8,0.05,0.4,6,1.5);
+    const g=new THREE.CylinderGeometry(S.bw,S.bw,1,8,1,true);g.rotateX(Math.PI/2);
+    const m=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:new THREE.Color(...S.col),transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
+    m.position.lerpVectors(gun,end,0.5);m.quaternion.setFromUnitVectors(new V3(0,0,1),f);m.scale.set(1,1,gun.distanceTo(end));fxGroup.add(m);railFx.push({m,t:0.3});
+    flashLight(gun,[S.col[0]/8,S.col[1]/8,S.col[2]/8],70,0.08);if(hits>1)toast('ПРОШИТО НАСКВОЗЬ: '+hits,'ok');
+    return;}
+  if(S.t==='chain'){
+    let from=gun.clone(),cur=aim,dmg=D*S.dmg;const hit=new Set();
+    if(!cur){let L=0;const p=new V3();while(L<12){L+=0.5;p.copy(gun).addScaledVector(f,L);if(pointBlocked(p))break;}teslaArc(from,p);return;}
+    for(let n=0;n<=S.jumps&&cur;n++){hit.add(cur);teslaArc(from,cur.pos);damageEntity(cur,dmg,'player');if(cur.alive!==false)cur.stun=Math.max(cur.stun||0,0.4);burst(cur.pos,8,[0.8,1.5,5],5,0.04,0.3,0,2);
+      from=cur.pos.clone();dmg*=0.88;let nb=null,nd=16;for(const h of hostiles()){if(hit.has(h))continue;const d=h.pos.distanceTo(from);if(d<nd){nd=d;nb=h;}}cur=nb;}
+    if(hit.size>3)toast('ЦЕПЬ: '+hit.size,'ok');}
+}
 // ===== микроракеты Металлического шторма: до 4000 в воздухе, рисуются одним инстансом =====
 const MR_N=4000,micro=[];let mrIM=null,mrAcc=0,mrSnd=0,mrFrame=0;
 function buildMicro(){
@@ -1933,10 +2021,11 @@ function fireSpecial(W){
   const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone();
   const gun=new V3(0,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
   if(W==='storm'){fireStorm(f,gun);P.fireCd=0.04;return;}
-  const RNG={rail:150,minigun:80,grenade:70,plasma:90,tesla:38,laser:90};
+  const RNG={rail:150,minigun:80,grenade:70,plasma:90,tesla:38,laser:90};const S=WEAPONS[W];
   let aim=null;
-  if(W!=='swarm'){let ba=W==='tesla'?0.35:0.12;for(const h of hostiles()){_v2.subVectors(h.pos,P.pos);if(_v2.length()>(RNG[W]||45))continue;const a=f.angleTo(_v2);if(a<ba){ba=a;aim=h;}}
-    if(aim&&W!=='grenade')f.subVectors(aim.pos,P.pos).normalize();}
+  if(W!=='swarm'){let ba=S.aimA||(W==='tesla'||S.t==='chain'?0.35:0.12);const rg=S.rng||RNG[W]||(S.t?90:45);for(const h of hostiles()){_v2.subVectors(h.pos,P.pos);if(_v2.length()>rg)continue;const a=f.angleTo(_v2);if(a<ba){ba=a;aim=h;}}
+    if(aim&&W!=='grenade'&&!S.gren)f.subVectors(aim.pos,P.pos).normalize();}
+  if(S.t){fireGeneric(W,S,f,gun,aim);return;}
   if(W==='minigun'){
     P.fireCd=lerp(0.14,0.032,P.spin);P.heat+=0.022*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
     const side=(P.gunSide^=1)?0.06:-0.06;const gp=new V3(side,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
@@ -2073,7 +2162,14 @@ function updateCombat(dt,rdt){
     const hacked=turrets.filter(t=>t.team==='ally').length;
     if(hacked>=3&&!session.reinf){session.reinf=true;for(let i=0;i<3;i++)spawnEnemyRandom('striker');toast('ОХРАНА ВЫЗВАЛА ПОДКРЕПЛЕНИЕ','bad');}
     if(hacked>=3&&session.reinf&&hostileDrones===0)endSession(true,'ВЗЛОМ УДАЛСЯ',['Турелей под контролем: 3','Время: '+fmt(session.time)]);
-  }else if(!session.mission){
+  }else if(curMission()&&curMission().hunt){const M=curMission();
+    if(M.hunt==='kamikaze'){const alive=enemies.filter(e=>e.alive&&e.kind==='kamikaze').length;
+      if(alive<3&&session.spawned<M.kills+4){spawnEnemyRandom('kamikaze');session.spawned++;}}
+    else if(hostileDrones-enemies.filter(e=>e.alive&&e.kind==='sniper').length<1&&Math.random()<dt*0.15)spawnEnemyRandom('scout');
+    if(session.huntKills>=M.kills)endSession(true,'ЦЕЛЬ УНИЧТОЖЕНА',['Сбито: '+session.huntKills,'Время: '+fmt(session.time)]);
+    else if(M.hunt==='kamikaze'&&session.spawned>=M.kills+4&&!enemies.some(e=>e.alive&&e.kind==='kamikaze'))endSession(false,'РОЙ УШЁЛ',['Сбито: '+session.huntKills+' из '+M.kills]);
+  }else if(!session.mission||(curMission()&&curMission().survive)){
+    if(session.surviveT){session.surviveT-=dt;if(session.surviveT<=0){session.surviveT=0;endSession(true,'ПРОДЕРЖАЛСЯ',['Волна: '+session.wave,'Уничтожено: '+session.kills]);return;}}
     if(hostileDrones===0&&!session.waitWave){session.waitWave=2.5;}
     if(session.waitWave){session.waitWave-=dt;if(session.waitWave<=0){session.waitWave=0;nextWave();}}
   }
@@ -2354,11 +2450,11 @@ function updateHUD(rdt){
     H.sub.textContent=m==='duel'?('КРУГ '+Math.min(race.laps+(race.lapRunning?1:0),race.lapsTarget)+'/'+race.lapsTarget+'  ·  ЛУЧШИЙ '+fmt(race.best)):('ЛУЧШИЙ '+fmt(race.best)+(race.lastLap!=null?'  ·  ПОСЛЕДНИЙ '+fmt(race.lastLap):''));
     H.gates.textContent='ВОРОТА '+(race.next+1)+'/'+gates.length;
     if(m==='duel'){const pp=playerProgress();const place=1+bots.filter(b=>b.finished||botProgress(b)>pp).length;H.pos.textContent='МЕСТО '+place+'/4';}else H.pos.textContent='';
-    H.obj.textContent=session.mission==='m1'?'Цель: круг быстрее 00:32.00':m==='editor'?'РЕДАКТОР  ·  ворот: '+gates.length:(!race.lapRunning&&session.countdown<=0?'Пролети через первые ворота':'');
+    const CM=curMission();H.obj.textContent=CM&&CM.lapT?'Цель: круг быстрее '+fmt(CM.lapT):m==='editor'?'РЕДАКТОР  ·  ворот: '+gates.length:(!race.lapRunning&&session.countdown<=0?'Пролети через первые ворота':'');
     H.extra.textContent=ghost.frames&&m==='race'?'ПРИЗРАК: '+fmt(ghost.frames[ghost.frames.length-1][0]):'';
   }else if(m==='drift'){
     const left=Math.max(0,session.timeLimit-session.time);H.timer.textContent=fmt(left);H.gates.textContent='';H.extra.textContent='';H.pos.textContent='';
-    const cur=driftTotal+Math.round(driftAcc);H.obj.textContent='ОЧКИ ЗАНОСА: '+cur+(session.mission==='m6'?'  /  1000':'');H.sub.textContent='РЕКОРД '+profile.bestDrift;
+    const cur=driftTotal+Math.round(driftAcc);H.obj.textContent='ОЧКИ ЗАНОСА: '+cur+(curMission()&&curMission().drift?'  /  '+curMission().drift:'');H.sub.textContent='РЕКОРД '+profile.bestDrift;
   }else if(m==='combat'){
     H.timer.textContent=fmt(session.time);H.gates.textContent='';H.extra.textContent='';
     const hd=enemies.filter(e=>e.alive&&e.team==='enemy').length;
@@ -2366,6 +2462,8 @@ function updateHUD(rdt){
     else if(session.mission==='m7'){const k=session.hackedKinds||{};H.obj.textContent='Камеры '+Math.min(3,k.camera||0)+'/3 · кран '+Math.min(1,k.crane||0)+'/1 · щиток '+Math.min(1,k.panel||0)+'/1';H.sub.textContent=hasMod('hacker')?'':'НЕТ МОДУЛЯ ХАКЕР';}
     else if(session.mission==='m3'){H.obj.textContent='Уничтожь дроны: '+session.kills+'/8';H.sub.textContent='';}
     else if(session.mission==='m4'){const hk=turrets.filter(t=>t.team==='ally').length;H.obj.textContent=hk<3?'Взломай турели: '+hk+'/3  (H)':'Добей охрану: '+hd;H.sub.textContent=hasMod('hacker')?'':'НЕТ МОДУЛЯ ХАКЕР';}
+    else if(curMission()&&curMission().hunt){const M=curMission();H.obj.textContent=(M.hunt==='sniper'?'Снайперы: ':'Камикадзе: ')+(session.huntKills||0)+'/'+M.kills;H.sub.textContent='';}
+    else if(curMission()&&curMission().survive){H.obj.textContent='ПРОДЕРЖИСЬ: '+Math.ceil(session.surviveT||0)+' с  ·  волна '+session.wave;H.sub.textContent='';}
     else{H.obj.textContent='ВОЛНА '+session.wave+'  ·  врагов: '+hd;H.sub.textContent='ОЧКИ '+session.score;}
     H.pos.textContent='';
     H.hp.style.width=(P.hp/P.maxHp*100)+'%';H.hp.style.background=P.hp/P.maxHp<0.3?'var(--red)':'var(--ok)';H.hpT.textContent=Math.ceil(P.hp)+'/'+P.maxHp;
@@ -2491,7 +2589,7 @@ function renderTracks(){
 }
 function renderMissions(){
   $('#ms-list').innerHTML=MISSIONS.map(m=>{const done=profile.done[m.id];const blocked=m.need&&!hasMod(m.need);
-    return `<div class="card" data-mission="${m.id}"><b>${m.name.toUpperCase()}</b><span class="tag ${done?'ok':''}">${done?'ПРОЙДЕНО':'НАГРАДА: '+SKINS[m.reward].name.toUpperCase()}</span><p>${m.desc}</p>${blocked?'<p style="color:var(--red)">Установи модуль Хакер в Ангаре</p>':''}</div>`;}).join('')
+    return `<div class="card" data-mission="${m.id}"><b>${m.name.toUpperCase()}</b><span class="tag ${done?'ok':''}">${done?'ПРОЙДЕНО':'НАГРАДА: '+(m.reward?SKINS[m.reward].name.toUpperCase():m.cr+' КР')}</span><p>${m.desc}</p>${blocked?'<p style="color:var(--red)">Установи модуль Хакер в Ангаре</p>':''}</div>`;}).join('')
     +`<div class="note">Рекорд в режиме Бой: ${profile.bestCombat} очков</div>`;
 }
 function renderSettings(){
@@ -2601,8 +2699,8 @@ function updatePlay(dt,rdt){
   updateHack(rdt);
   if(session.mode==='drift'&&!session.ended&&session.countdown<=0&&session.time>=session.timeLimit){
     const sc=driftTotal+Math.round(driftAcc),rec=sc>profile.bestDrift;if(rec){profile.bestDrift=sc;saveP();}
-    const ok=session.mission==='m6'?sc>=1000:true;
-    endSession(ok,session.mission==='m6'?(ok?'МИССИЯ ВЫПОЛНЕНА':'МАЛО ОЧКОВ'):'ВРЕМЯ ВЫШЛО',['Очки заноса: '+sc,rec?'Новый рекорд':'Рекорд: '+profile.bestDrift]);}
+    const DM=curMission(),ok=DM&&DM.drift?sc>=DM.drift:true;
+    endSession(ok,DM?(ok?'МИССИЯ ВЫПОЛНЕНА':'МАЛО ОЧКОВ'):'ВРЕМЯ ВЫШЛО',['Очки заноса: '+sc,rec?'Новый рекорд':'Рекорд: '+profile.bestDrift]);}
   // в редакторе подсказка
   if(session.mode==='editor')H.edit.innerHTML='<b>G</b> поставить ворота перед дроном &nbsp; <b>Z</b> отменить &nbsp; <b>B</b> удалить ближайшие &nbsp; <b>T</b> проверить &nbsp; <b>Esc</b> меню и ссылка';
 }
@@ -2676,7 +2774,7 @@ async function init(){
   requestAnimationFrame(t=>{last=t;frame(t);});
 }
 init().catch(e=>{console.error(e);setLoad(1,'Ошибка: '+e.message);});
-window.__ID={run:(sec,i,dt=1/60,stop)=>{const n=Math.round(sec/dt);for(let k=0;k<n;k++){dbgInp=typeof i==='function'?i():(i||null);frame(0,dt,true);if(stop&&stop())break;}dbgInp=null;composer.render(dt);},setInp:i=>{dbgInp=i;},state:()=>state,inp,bots,P,race,session:()=>session,gates:()=>gates,settings,startMode,camera,scene,renderer,enemies,turrets,hack,raceCurve:()=>raceCurve,TRACKS,pointBlocked,setTrack,applyTOD,pickups,cams,crane,profile,fireEMP,spawnEnemy,wrecks,explosion,micro,damageEntity};
+window.__ID={run:(sec,i,dt=1/60,stop)=>{const n=Math.round(sec/dt);for(let k=0;k<n;k++){dbgInp=typeof i==='function'?i():(i||null);frame(0,dt,true);if(stop&&stop())break;}dbgInp=null;composer.render(dt);},setInp:i=>{dbgInp=i;},state:()=>state,inp,bots,P,race,session:()=>session,gates:()=>gates,settings,startMode,camera,scene,renderer,enemies,turrets,hack,raceCurve:()=>raceCurve,TRACKS,pointBlocked,setTrack,applyTOD,pickups,cams,crane,profile,fireEMP,spawnEnemy,wrecks,explosion,micro,damageEntity,COL};
 </script>
 </body>
 </html>
