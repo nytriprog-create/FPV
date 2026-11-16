@@ -1082,7 +1082,7 @@ function updateGust(dt){
   gust.lerp(gustT,1-Math.exp(-dt*1.4));
 }
 function placePlayer(pos,dirVec){
-  P.pos.copy(pos);P.prev.copy(pos);P.vel.set(0,0,0);P.w.set(0,0,0);P.heading=Math.atan2(-dirVec.x,-dirVec.z);P.hs=P.heading;gust.set(0,0,0);
+  P.pos.copy(pos);P.prev.copy(pos);P.vel.set(0,0,0);P.w.set(0,0,0);P.heading=Math.atan2(-dirVec.x,-dirVec.z);P.hs=P.heading;gust.set(0,0,0);P.altT=undefined;
   P.q.setFromAxisAngle(UP,P.heading);P.crashed=0;kThr=0;repairDrone();
 }
 const _qT=new THREE.Quaternion(),_qE=new THREE.Quaternion(),_dw=new V3(),_acc=new V3(),_vb=new V3(),_qi=new THREE.Quaternion();
@@ -1105,7 +1105,12 @@ function stepPlayer(inp,dt){
       _qE.copy(P.q).invert().multiply(_qT);if(_qE.w<0){_qE.x*=-1;_qE.y*=-1;_qE.z*=-1;_qE.w*=-1;}
       const ang=2*Math.acos(clamp(_qE.w,-1,1)),s=Math.sqrt(Math.max(1-_qE.w*_qE.w,1e-9));
       _dw.set(_qE.x/s,_qE.y/s,_qE.z/s).multiplyScalar(Math.min(ang*9,C.rate));
-      const vyT=inp.climb*7.5,aReq=g+(vyT-P.vel.y)*2.2;thr=clamp(aReq/(C.twr*g*Math.max(upY,0.35)),0,1);
+      // удержание высоты: без нажатий дрон держит запомненную высоту (раньше его сносило вверх эффектом земли)
+      if(Math.abs(inp.climb)>0.05||P.altT===undefined||!isFinite(P.altT))P.altT=P.pos.y;
+      const vyT=Math.abs(inp.climb)>0.05?inp.climb*7.5:clamp((P.altT-P.pos.y)*2.5,-3,3);
+      const geH=1+0.25*Math.max(0,1-P.pos.y/1.2),m=P.mot;
+      const twEff=C.twr*(0.86+0.14*clamp((P.bat-13.2)/3.6,0,1))*((m[0]+m[1]+m[2]+m[3])/4*0.75+0.25*(deadMotors()?0:1))*geH;
+      const aReq=g+(vyT-P.vel.y)*2.2-gust.y;thr=clamp(aReq/(twEff*g*Math.max(upY,0.35)),0,1);
     }
     // разбитые моторы: дрон тянет в сторону слабого мотора, крутит по рыскanию и трясёт
     {const m=P.mot,K=6*thr;
@@ -1177,7 +1182,7 @@ function rammingCheck(){
 }
 function crash(t){P.crashed=t;P.w.set(rand(-12,12),rand(-6,6),rand(-12,12));P.crashT=t;}
 function respawnPlayer(){
-  if(session.mode==='combat'){_e.setFromQuaternion(P.q,'YXZ');P.q.setFromAxisAngle(UP,_e.y);P.heading=_e.y;P.hs=_e.y;P.w.set(0,0,0);P.crashed=0;return;}
+  if(session.mode==='combat'){_e.setFromQuaternion(P.q,'YXZ');P.q.setFromAxisAngle(UP,_e.y);P.heading=_e.y;P.hs=_e.y;P.w.set(0,0,0);P.crashed=0;P.altT=undefined;return;}
   if(gates.length){const gi=race.lastGate>=0?race.lastGate:0;const g=gates[race.lastGate>=0?gi:0];
     const pos=race.lastGate>=0?g.c.clone().addScaledVector(g.n,2.5):g.c.clone().addScaledVector(g.n,-10).setY(0.25);placePlayer(pos,g.n);
     if(race.lastGate>=0)kThr=0.3;}
