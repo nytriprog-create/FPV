@@ -2232,7 +2232,7 @@ const BLD={
   ammo:{name:'СКЛАД БОЕПРИПАСОВ',w:6,d:5,h:3.5,hp:340,score:700,ammo:true},
   radar:{name:'РАДАР',w:4,d:4,h:7,hp:320,score:800,radar:true},
   command:{name:'КОМАНДНЫЙ ПУНКТ',w:8,d:7,h:5.5,hp:760,score:1000},
-  bunker:{name:'БУНКЕР',w:7,d:7,h:3,hp:950,score:1000,armor:0.25},
+  bunker:{name:'БУНКЕР',w:7,d:7,h:3,hp:800,score:1000,armor:0.5},
   generator:{name:'ГЕНЕРАТОР ЩИТА',w:5,d:5,h:4.3,hp:380,score:900,gen:true},
   garage:{name:'АНГАР ТЕХНИКИ',w:10,d:8,h:6,hp:900,score:1200,garage:true}
 };
@@ -2275,7 +2275,7 @@ const SPECIAL=[
   {k:'nuke',name:'Заряд «Малыш»',ammo:1,t:'drop',desc:'Мини-ядерный взрыв на 35 м. Сбрось и улетай!'}
 ];
 const SPPRICE={fab:0,cluster:900,napalm:1000,buster:1200,thermo:1600,kab:1400,atgm:1300,grad:1500,cruise:2200,sticky:800,empb:1400,smoke:500,flares:600,arty:1800,orbit:3500,swarm:2000,shock:1700,seismic:2400,grav:2600,nuke:8000};
-SPECIAL.forEach(s=>s.price=SPPRICE[s.k]);
+SPECIAL.forEach(s=>{s.price=SPPRICE[s.k];s.rel=s.k==='nuke'?60:Math.round(30/s.ammo+3);});// перезарядка одного заряда, сек: чем меньше зарядов — тем дольше
 const SPMAX=Object.fromEntries(SPECIAL.map(s=>[s.k,s.ammo]));
 let BURNT=null,VMAT=null,SPMAT=null,SPGEO=null;
 function strikeMats(){
@@ -2433,7 +2433,7 @@ function updateVeh(e,dt){
   e.cool-=dt;
   if(!P.alive||!e.los||session.countdown>0||playerHidden()||dist>V.range)return;
   if(e.cool>0)return;
-  const DK=0.7;// общий множитель урона техники по игроку
+  const DK=0.5;// общий множитель урона техники по игроку
   const mz=vehMuzzle(e);_v2.copy(P.pos).addScaledVector(P.vel,dist/(V.gun==='cannon'?55:90)).sub(mz).normalize();
   if(V.gun==='mg'||V.gun==='flak'){
     const spr=V.gun==='flak'?0.05:0.03;_v2.add(_v3.set(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(spr)).normalize();
@@ -2476,12 +2476,12 @@ function curSpecial(){return SPECIAL.find(s=>s.k===profile.special)||SPECIAL[0];
 function addProj(o){sproj.push(Object.assign({life:8,g:1,v:new V3()},o));}
 function fireSpecialWeapon(){
   const S=curSpecial(),am=session.spAmmo;
-  if(!(am[S.k]>0)){toast(S.name.toUpperCase()+': ЗАРЯДЫ КОНЧИЛИСЬ','bad');sfx('err');P.spCd=0.6;return;}
+  if(!(am[S.k]>0)){toast(S.name.toUpperCase()+': ПЕРЕЗАРЯДКА '+Math.ceil(S.rel-(session.spRel||0))+' С','bad');sfx('err');P.spCd=0.6;return;}
   am[S.k]--;P.spCd=0.55;
   const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone(),below=P.pos.clone().setY(P.pos.y-0.35),gun=new V3(0,-0.05,-0.2).applyQuaternion(P.q).add(P.pos);
   const drop=(mesh,o)=>{addProj(Object.assign({p:below,v:P.vel.clone(),mesh:spMesh(mesh,mesh==='big'&&S.k==='nuke'?'nuke':'bomb',mesh==='big'?1:1)},o));sfx('beep',null,0.6);};
   switch(S.k){
-    case 'fab':drop('bomb',{hit:p=>{explosion(p,1.3);strikeBlast(p,7,230);}});break;
+    case 'fab':drop('bomb',{hit:p=>{explosion(p,1.3);strikeBlast(p,7,300);}});break;
     case 'cluster':drop('bomb',{fuse:0.7,hit:(p,h,s)=>{explosion(p,0.5);for(let i=0;i<12;i++){addProj({p:p.clone(),v:s.v.clone().add(_v3.set(rand(-6,6),rand(-2,3),rand(-6,6))),mesh:spMesh('small','bomb'),hit:q=>{explosion(q,0.55);strikeBlast(q,3.6,75);}});}sfx('grenade');}});break;
     case 'napalm':drop('bomb',{hit:p=>{explosion(p,0.8);szones.push({type:'fire',p:p.clone().setY(Math.max(p.y,0.3)),R:7,t:10,dps:45});sfx('stormroar',p,1);}});break;
     case 'buster':drop('bomb',{v:P.vel.clone().setY(P.vel.y-14),g:1.6,hit:p=>{explosion(p,1.0);strikeBlast(p,4.2,620,{ap:true,bld:2});burst(p,40,[6,4,2],14,0.06,0.6,9.8,1);}});break;
@@ -2563,7 +2563,7 @@ function updateZones(dt){
 }
 function setupStrike(op){
   session.structTotal=op.b.length;session.strikeT=0;
-  const hpK=1+0.12*OPS.indexOf(op),placed=[];
+  const hpK=0.8+0.08*OPS.indexOf(op),placed=[];
   // здания в дальней части цеха, техника между ними
   for(const k of op.b){const B=BLD[k];const sp=freeSpot(B.w,B.d,-10,HZ-10,placed,Math.max(B.w,B.d)+6)||freeSpot(B.w,B.d,-40,HZ-8,placed,Math.max(B.w,B.d)+3);
     if(!sp)continue;placed.push(sp);buildStruct(k,sp.x,sp.z,hpK);}
@@ -2582,6 +2582,7 @@ function clearStrike(){
 function setupSpecials(){strikeMats();const k=curSpecial().k;session.spAmmo={[k]:SPMAX[k]};P.spCd=0;P.flareT=0;session.gradQ=null;}
 function updateSpecials(dt){
   if(!session.spAmmo)setupSpecials();
+  {const S=curSpecial(),a=session.spAmmo[S.k]||0;if(a<SPMAX[S.k]){session.spRel=(session.spRel||0)+dt;if(session.spRel>=S.rel){session.spRel=0;session.spAmmo[S.k]=a+1;sfx('beep',null,0.5);}}else session.spRel=0;}
   P.spCd=Math.max(0,(P.spCd||0)-dt);P.flareT=Math.max(0,(P.flareT||0)-dt);
   if(inp.alt&&P.alive&&session.countdown<=0&&P.crashed<=0&&P.spCd<=0&&!session.ended)fireSpecialWeapon();
   // «Град»: ракеты по очереди
@@ -2622,7 +2623,8 @@ function strikeHUD(){
 }
 function specialHUD(){
   const S=curSpecial(),a=session.spAmmo[S.k]||0;
-  return '<div class="mod'+(a<=0||P.spCd>0?' cd':'')+'" style="border-color:#ffd27a;color:#ffd27a">ПКМ '+S.name.toUpperCase()+' x'+a+'</div>';
+  const full=a>=SPMAX[S.k],left=Math.ceil(S.rel-(session.spRel||0));
+  return '<div class="mod'+(a<=0||P.spCd>0?' cd':'')+'" style="border-color:#ffd27a;color:#ffd27a">ПКМ '+S.name.toUpperCase()+' '+a+'/'+SPMAX[S.k]+(full?'':'  +1 через '+left+' с')+'<i style="width:'+(full?100:((session.spRel||0)/S.rel*100))+'%"></i></div>';
 }
 function strikeMarkers(mk){
   for(const s of structs)if(s.alive){const pr=Math.max(0,Math.round(s.hp/s.maxHp*100));mk('en',s.top,s.name+' '+pr+'%'+(shieldsUp()&&!s.B.gen?' ЩИТ':''),true);}
@@ -3040,7 +3042,7 @@ function renderHangar(){
     return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<w.price?'lock':''}" data-weapon="${k}"><b>${w.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${w.desc}${ammo}</p></div>`;}).join('');
   $('#hg-specials').innerHTML=SPECIAL.map(s=>{const own=profile.specials.includes(s.k),sel=profile.special===s.k;
     const tag=sel?'УСТАНОВЛЕНО':own?'':(profile.credits>=s.price?'КУПИТЬ: ':'ЦЕНА: ')+s.price+' КР';
-    return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<s.price?'lock':''}" data-special="${s.k}"><b>${s.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${s.desc} Зарядов на вылет: ${s.ammo}.</p></div>`;}).join('');
+    return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<s.price?'lock':''}" data-special="${s.k}"><b>${s.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${s.desc} Зарядов: ${s.ammo}, перезарядка ${s.rel} с на заряд.</p></div>`;}).join('');
 }
 // секретный промокод: в коде хранится только отпечаток, а не сам код
 function usePromo(){
