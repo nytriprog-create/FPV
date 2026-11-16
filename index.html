@@ -56,6 +56,10 @@ html,body{height:100%;overflow:hidden;background:#000;color:var(--txt);font-fami
 .bar{height:6px;background:rgba(255,255,255,.14);margin:3px 0 8px;position:relative;overflow:hidden}
 .bar i{position:absolute;left:0;top:0;bottom:0;width:100%;background:var(--ok)}
 #heat-bar{background:var(--acc)}#boost-bar{background:var(--cy)}
+#parts{display:flex;align-items:center;gap:8px;margin-top:4px}
+#parts .pg{display:grid;grid-template-columns:repeat(2,9px);gap:3px}
+#parts .pg i{width:9px;height:9px;background:var(--ok);display:block}
+#parts #p-txt{font-size:13px}
 .mods{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;margin-top:4px}
 .mod{font-size:12px;padding:2px 6px;border:1px solid rgba(255,255,255,.35);position:relative;overflow:hidden}
 .mod i{position:absolute;left:0;bottom:0;height:2px;background:var(--cy)}
@@ -184,7 +188,7 @@ h3{font-size:15px;letter-spacing:.2em;color:var(--dim);margin:16px 0 8px;font-we
   <div id="osd-tr" class="osd"><div id="o-pos"></div><div id="o-gates"></div><div id="o-extra"></div></div>
   <div id="horizon"><div class="hl"></div></div>
   <div id="cross"></div>
-  <div id="osd-bl" class="osd"><div class="thr"><i id="thr-bar"></i></div><div id="o-thr">THR 0%</div><div id="o-spd">0 км/ч</div><div id="o-alt">ALT 0.0</div></div>
+  <div id="osd-bl" class="osd"><div class="thr"><i id="thr-bar"></i></div><div id="o-thr">THR 0%</div><div id="o-spd">0 км/ч</div><div id="o-alt">ALT 0.0</div><div id="parts"><span class="pg"><i></i><i></i><i></i><i></i></span><span id="p-txt">ДРОН ЦЕЛ</span></div></div>
   <div id="drift"><div id="drift-ang">ЗАНОС 0°</div><div class="db"><div id="drift-bar"></div></div><div id="drift-score"></div></div>
   <div id="osd-br" class="osd">
     <div>КОРПУС <span id="hp-txt"></span></div><div class="bar"><i id="hp-bar"></i></div>
@@ -952,7 +956,15 @@ function segSphere(a,b,c,r){_sa.subVectors(b,a);const l2=_sa.lengthSq();const t=
 
 // ================= ИГРОК =================
 const P={pos:new V3(),prev:new V3(),vel:new V3(),q:new THREE.Quaternion(),w:new V3(),thr:0,hp:100,maxHp:100,heat:0,overheat:false,fireCd:0,
-  shield:0,shieldCd:0,rocketCd:0,boostE:1,crashed:0,alive:true,model:null,cfg:DRONES.falcon,heading:0,shieldMesh:null,gunSide:0,bat:16.8};
+  shield:0,shieldCd:0,rocketCd:0,boostE:1,crashed:0,alive:true,model:null,cfg:DRONES.falcon,heading:0,shieldMesh:null,gunSide:0,bat:16.8,mot:[1,1,1,1],cam:1,spin:0};
+// ===== повреждения по частям: 4 мотора (0 перед-лев, 1 перед-прав, 2 зад-лев, 3 зад-прав) и камера =====
+function repairDrone(k=1){for(let i=0;i<4;i++)P.mot[i]=Math.min(1,P.mot[i]+k);P.cam=Math.min(1,P.cam+k);}
+function hurtMotor(i,d){
+  const was=P.mot[i];P.mot[i]=Math.max(0,was-d);
+  if(was>0&&P.mot[i]<=0){toast('МОТОР '+(i+1)+' ОТКАЗАЛ','bad');sfx('motorfail');_v2.set(i&1?0.12:-0.12,0,i&2?0.12:-0.12).applyQuaternion(P.q).add(P.pos);burst(_v2,26,[6,2.4,0.6],7,0.04,0.5,9.8,1);flashLight(_v2,[1,0.5,0.2],50,0.1);}
+  else if(was>0.5&&P.mot[i]<=0.5)toast('МОТОР '+(i+1)+' ПОВРЕЖДЁН','bad');
+}
+function deadMotors(){let n=0;for(const m of P.mot)if(m<=0)n++;return n;}
 function rebuildPlayer(){
   if(P.model)disposeObj(P.model.group);
   const base=DRONES[profile.drone]||DRONES.falcon,u=profile.up;
@@ -971,7 +983,7 @@ function updateGust(dt){
 }
 function placePlayer(pos,dirVec){
   P.pos.copy(pos);P.prev.copy(pos);P.vel.set(0,0,0);P.w.set(0,0,0);P.heading=Math.atan2(-dirVec.x,-dirVec.z);P.hs=P.heading;gust.set(0,0,0);
-  P.q.setFromAxisAngle(UP,P.heading);P.crashed=0;kThr=0;
+  P.q.setFromAxisAngle(UP,P.heading);P.crashed=0;kThr=0;repairDrone();
 }
 const _qT=new THREE.Quaternion(),_qE=new THREE.Quaternion(),_dw=new V3(),_acc=new V3(),_vb=new V3(),_qi=new THREE.Quaternion();
 const rc=(x,ex=0.42)=>x*(1-ex+ex*x*x);
@@ -995,12 +1007,17 @@ function stepPlayer(inp,dt){
       _dw.set(_qE.x/s,_qE.y/s,_qE.z/s).multiplyScalar(Math.min(ang*9,C.rate));
       const vyT=inp.climb*7.5,aReq=g+(vyT-P.vel.y)*2.2;thr=clamp(aReq/(C.twr*g*Math.max(upY,0.35)),0,1);
     }
+    // разбитые моторы: дрон тянет в сторону слабого мотора, крутит по рыскanию и трясёт
+    {const m=P.mot,K=6*thr;
+      _dw.x-=((m[2]+m[3])-(m[0]+m[1]))*0.5*K;_dw.z+=((m[1]+m[3])-(m[0]+m[2]))*0.5*K;_dw.y+=((m[0]+m[3])-(m[1]+m[2]))*0.5*K*0.6;
+      const wob=1-Math.min(m[0],m[1],m[2],m[3]);if(wob>0.25){_dw.x+=rand(-1,1)*wob*3;_dw.z+=rand(-1,1)*wob*3;}}
     P.w.lerp(_dw,1-Math.exp(-dt/C.tau));
   }
   const wl=P.w.length();if(wl>1e-6){_q.setFromAxisAngle(_v2.copy(P.w).divideScalar(wl),wl*dt);P.q.multiply(_q).normalize();}
   _v.set(0,1,0).applyQuaternion(P.q);
   const ge=1+0.25*Math.max(0,1-P.pos.y/1.2);
   let tw=C.twr*(0.86+0.14*clamp((P.bat-13.2)/3.6,0,1)); // севшая батарея = меньше тяги
+  tw*=(P.mot[0]+P.mot[1]+P.mot[2]+P.mot[3])/4*0.75+0.25*(deadMotors()?0:1); // слабые моторы = меньше тяги
   if(inp.boost&&hasMod('boost')&&P.boostE>0&&P.crashed<=0&&session.mode!=='editor'){P.boostE=Math.max(0,P.boostE-dt*0.38);P.boosting=true;
     if(acro)tw*=1.5;else{_v2.set(0,0,-1).applyQuaternion(P.q);_v2.y=0;if(_v2.lengthSq()>1e-4)P.vel.addScaledVector(_v2.normalize(),16*dt);}}
   else{P.boosting=false;P.boostE=Math.min(1,P.boostE+dt*0.14);}
@@ -1017,9 +1034,46 @@ function stepPlayer(inp,dt){
 function onPlayerImpact(imp){
   sfx('thud',null,clamp(imp/18,0.2,1));addShake(clamp(imp/22,0.05,0.7));
   _v.set(_st.nx,_st.ny,_st.nz).multiplyScalar(-0.2).add(P.pos);burst(_v,Math.min(30,imp*2|0),[5,2.6,0.8],imp*0.5,0.05,0.5,9.8,1);
-  const combat=session.mode==='combat';
-  if(combat){if(imp>9)damagePlayer((imp-9)*2.4,true);if(imp>21&&P.crashed<=0)crash(0.8);}
-  else if(imp>15&&P.crashed<=0){crash(1.4);centerMsg('АВАРИЯ',1.2);}
+  const combat=session.mode==='combat';if(session.mode==='editor')return;
+  const ak=1/(1+0.25*(profile.up.armor||0));
+  if(imp>5){
+    // нормаль удара в системе дрона: куда пришёлся удар
+    _v.set(_st.nx,_st.ny,_st.nz).applyQuaternion(_qi.copy(P.q).invert());
+    const md=(imp-5)*0.05*ak;
+    if(_v.y>0.7){for(let i=0;i<4;i++)hurtMotor(i,md*0.3);} // плашмя об пол: всем понемногу
+    else{let best=0,bd=-9;for(let i=0;i<4;i++){const d=-(_v.x*((i&1)?1:-1)+_v.z*((i&2)?1:-1));if(d>bd){bd=d;best=i;}}
+      hurtMotor(best,md);hurtMotor(best^1,md*0.3);hurtMotor(best^2,md*0.3);
+      if(_v.z>0.45&&imp>6){const c0=P.cam;P.cam=Math.max(0,P.cam-(imp-6)*0.06*ak);if(c0>0.5&&P.cam<=0.5)toast('КАМЕРА ПОВРЕЖДЕНА','bad');}}
+  }
+  if(combat){if(imp>6)damagePlayer((imp-6)*3.2*ak,true);if(imp>18&&P.crashed<=0)crash(0.8);
+    if(P.alive&&deadMotors()>=3){toast('ДРОН НЕ МОЖЕТ ЛЕТЕТЬ','bad');damagePlayer(9999,true);}}
+  else if(P.crashed<=0&&(imp>15||deadMotors()>=2)){crash(1.4);centerMsg(imp>15?'АВАРИЯ':'ОТКАЗ МОТОРОВ',1.2);}
+}
+// дым и искры из повреждённых моторов, индикатор частей
+let partsT=0;
+function updateParts(dt){
+  partsT-=dt;if(partsT>0)return;partsT=0.05;
+  for(let i=0;i<4;i++){const m=P.mot[i];if(m>0.55||!P.alive)continue;
+    _v2.set(i&1?0.12:-0.12,0.02,i&2?0.12:-0.12).applyQuaternion(P.q).add(P.pos);
+    const k=1-m/0.55;smoke.emit(_v2.x,_v2.y,_v2.z,rand(-0.3,0.3)+P.vel.x*0.3,rand(0.3,0.9),rand(-0.3,0.3)+P.vel.z*0.3,0.07,0.065,0.06,0.12+k*0.12,rand(0.6,1.2),-0.3,2,3);
+    if(Math.random()<k*0.6)sparks.emit(_v2.x,_v2.y,_v2.z,rand(-2,2),rand(-1,2),rand(-2,2),6,2.4,0.6,0.025,0.25,9.8,1);}
+  const pg=document.querySelectorAll('#parts .pg i');
+  for(let i=0;i<4;i++){const m=P.mot[i];pg[i].style.background=m<=0?'#3a0d12':m<0.5?'var(--red)':m<0.85?'#ffb020':'var(--ok)';}
+  const dm=deadMotors(),lo=Math.min(...P.mot);
+  const t=$('#p-txt');t.textContent=dm?'ОТКАЗ МОТОРА: '+dm:lo<0.5?'МОТОР ПОВРЕЖДЁН':P.cam<0.5?'КАМЕРА ПОВРЕЖДЕНА':lo<0.98||P.cam<0.98?'ЦЕЛОСТЬ '+Math.round((P.mot.reduce((a,b)=>a+b)/4*0.8+P.cam*0.2)*100)+'%':'ДРОН ЦЕЛ';
+  t.style.color=dm||lo<0.5?'var(--red)':lo<0.98||P.cam<0.98?'#ffb020':'';
+}
+// таран: столкновение с вражескими дронами
+function rammingCheck(){
+  if(!P.alive||P.crashed>0)return;
+  for(const e of enemies){if(!e.alive||e.type!=='drone')continue;const rr=(e.r||0.5)+0.22;
+    _v.subVectors(P.pos,e.pos);const d=_v.length();if(d>=rr||d<1e-4)continue;_v.divideScalar(d);
+    const rv=-_v2.subVectors(P.vel,e.vel).dot(_v);P.pos.addScaledVector(_v,rr-d+0.01);
+    if(rv<=0)continue;const mE=(e.E&&e.E.scale)||1,mP=1,j=rv*1.5;
+    P.vel.addScaledVector(_v,j*mE/(mP+mE));e.vel.addScaledVector(_v,-j*mP/(mP+mE));
+    if(rv>4){const n=_v.clone(),dm=rv*rv*0.35*(P.cfg.hp/100);if(e.team==='enemy')damageEntity(e,dm,'player');e.stun=Math.max(e.stun||0,0.6);
+      burst(e.pos.clone().addScaledVector(n,e.r||0.5),24,[6,2.6,0.8],8,0.05,0.4,9.8,1);sfx('ram',e.pos);
+      _st.nx=n.x;_st.ny=n.y;_st.nz=n.z;onPlayerImpact(rv*0.85);if(e.team==='enemy'&&dm>20)toast('ТАРАН -'+Math.round(dm),'ok');}}
 }
 function crash(t){P.crashed=t;P.w.set(rand(-12,12),rand(-6,6),rand(-12,12));P.crashT=t;}
 function respawnPlayer(){
@@ -1175,6 +1229,13 @@ function sfx(type,pos,vol=1){
     case 'swarm':for(let i=0;i<8;i++)setTimeout(()=>sfx('rocket',null,0.5),i*35);noise(0.4,1500,0.4,'bandpass');break;
     case 'shotgun':noise(0.08,1800,0.8,'bandpass');noise(0.35,500,0.6);tone(110,35,0.25,'sine',0.6);noise(0.2,7000,0.15,'highpass');break;
     case 'rail':tone(300,4200,0.09,'sawtooth',0.12);tone(5200,800,0.35,'sine',0.14);noise(0.25,6000,0.35,'highpass');tone(90,40,0.3,'sine',0.4);break;
+    case 'motorfail':noise(0.3,1200,0.5,'bandpass');tone(900,60,0.6,'sawtooth',0.12);noise(0.5,300,0.4);break;
+    case 'ram':noise(0.12,900,0.8);noise(0.06,3500,0.4,'bandpass');tone(160,40,0.25,'sine',0.5);break;
+    case 'minigun':{const p=rand(0.95,1.05);noise(0.03,3200*p,0.4,'bandpass');noise(0.07,800*p,0.22);tone(180*p,60,0.06,'sine',0.25);break;}
+    case 'plasma':tone(240,1400,0.08,'sawtooth',0.1);tone(900,180,0.35,'sine',0.25);noise(0.25,2000,0.2,'bandpass');break;
+    case 'grenade':noise(0.06,500,0.7);tone(130,60,0.15,'sine',0.5);noise(0.15,2500,0.15,'bandpass');break;
+    case 'tesla':for(let i=0;i<6;i++){const f=rand(600,3000);tone(f,f*rand(0.4,1.6),rand(0.03,0.09),'square',0.05);}noise(0.3,5000,0.35,'highpass');tone(60,60,0.3,'sawtooth',0.15);break;
+    case 'laser':tone(880,860,0.12,'sawtooth',0.035);tone(1760,1700,0.12,'sine',0.03);noise(0.12,6000,0.04,'highpass');break;
     case 'ric':{const f=rand(1800,3200);tone(f,f*0.45,rand(0.15,0.3),'sine',0.07);noise(0.04,4000,0.18,'bandpass');break;}
     case 'impact':noise(0.05,3500,0.22,'bandpass');noise(0.08,400,0.15);break;
     case 'whiz':{const s=AC.createBufferSource();s.buffer=AC.noiseBuf;const f=AC.createBiquadFilter();f.type='bandpass';f.Q.value=6;f.frequency.setValueAtTime(3500,t);f.frequency.exponentialRampToValueAtTime(900,t+0.22);const gg=AC.createGain();gg.gain.setValueAtTime(0.0001,t);gg.gain.exponentialRampToValueAtTime(0.35*vol,t+0.06);gg.gain.exponentialRampToValueAtTime(0.0001,t+0.24);s.connect(f);f.connect(gg);gg.connect(g);s.start(t,Math.random());s.stop(t+0.26);break;}
@@ -1459,6 +1520,7 @@ function spawnPanel(x,z,ry){
   panels.push({type:'panel',g,scrM,pos:_v.clone(),used:false,alive:true,team:'enemy',name:'ЩИТОК ПИТАНИЯ'});
 }
 function clearCombat(){
+  if(typeof laserM!=='undefined'&&laserM)laserM.visible=false;
   for(const e of enemies)disposeObj(e.m.group);enemies.length=0;
   for(const t of turrets)disposeObj(t.g);turrets.length=0;for(const p of panels)disposeObj(p.g);panels.length=0;
   for(const r of rockets)disposeObj(r.mesh);rockets.length=0;for(const r of railFx)disposeObj(r.m);railFx.length=0;clearExtras();removeColTag('dyn');
@@ -1569,15 +1631,25 @@ function fireRocket(){
 }
 function updateRockets(dt){
   for(let i=rockets.length-1;i>=0;i--){const r=rockets[i];r.life-=dt;
-    const sp=Math.min(r.v.length()+60*dt,62);
-    if(r.target&&r.target.alive){_v.subVectors(r.target.pos,r.p).normalize();_v2.copy(r.v).normalize();_v2.lerp(_v,1-Math.exp(-dt*4)).normalize();r.v.copy(_v2).multiplyScalar(sp);}else r.v.setLength(sp);
+    if(r.gren){r.v.y-=9.81*dt;}
+    else if(r.plasma){}
+    else{const sp=Math.min(r.v.length()+60*dt,62);
+      if(r.target&&r.target.alive){_v.subVectors(r.target.pos,r.p).normalize();_v2.copy(r.v).normalize();_v2.lerp(_v,1-Math.exp(-dt*4)).normalize();r.v.copy(_v2).multiplyScalar(sp);}else r.v.setLength(sp);}
     _v3.copy(r.p);r.p.addScaledVector(r.v,dt);
-    smoke.emit(r.p.x,r.p.y,r.p.z,rand(-0.4,0.4),rand(-0.4,0.4),rand(-0.4,0.4),0.14,0.13,0.12,0.25,1.2,-0.3,1,3);
-    sparks.emit(r.p.x,r.p.y,r.p.z,-r.v.x*0.05,-r.v.y*0.05,-r.v.z*0.05,6,2.5,0.6,0.18,0.12,0,0);
-    r.mesh.position.copy(r.p);r.mesh.quaternion.setFromUnitVectors(_v.set(0,0,1),_v2.copy(r.v).normalize());
+    if(r.plasma){for(let k=0;k<2;k++)sparks.emit(r.p.x,r.p.y,r.p.z,rand(-1.5,1.5),rand(-1.5,1.5),rand(-1.5,1.5),1.2,3,8,0.1,0.25,0,2);}
+    else if(r.gren){if(Math.random()<0.5)smoke.emit(r.p.x,r.p.y,r.p.z,0,0.2,0,0.12,0.12,0.12,0.1,0.6,-0.2,1,3);r.mesh.rotation.x+=dt*14;}
+    else{smoke.emit(r.p.x,r.p.y,r.p.z,rand(-0.4,0.4),rand(-0.4,0.4),rand(-0.4,0.4),0.14,0.13,0.12,0.25,1.2,-0.3,1,3);
+      sparks.emit(r.p.x,r.p.y,r.p.z,-r.v.x*0.05,-r.v.y*0.05,-r.v.z*0.05,6,2.5,0.6,0.18,0.12,0,0);}
+    r.mesh.position.copy(r.p);if(!r.gren)r.mesh.quaternion.setFromUnitVectors(_v.set(0,0,1),_v2.copy(r.v).normalize());
     let boom=r.life<=0||pointBlocked(r.p);
-    if(!boom)for(const h of hostiles())if(segSphere(_v3,r.p,h.pos,(h.r||1)+1)){boom=true;break;}
-    if(boom){const R=r.rad||5;explosion(r.p,r.small?0.55:0.9);for(const h of hostiles()){const d=h.pos.distanceTo(r.p);if(d<R)damageEntity(h,(r.dmg||80)*(1-d/(R+1)),'player');}disposeObj(r.mesh);rockets.splice(i,1);}
+    if(!boom)for(const h of hostiles())if(segSphere(_v3,r.p,h.pos,(h.r||1)+(r.gren?0.5:1))){boom=true;break;}
+    if(boom){const R=r.rad||5;
+      if(r.plasma){burst(r.p,50,[1.2,3,8],12,0.06,0.5,0,1.5);flashLight(r.p,[0.4,0.7,1],900,0.35);sfx('boom',r.p,0.7);addShake(clamp(1-r.p.distanceTo(P.pos)/30,0,0.4));}
+      else explosion(r.p,r.small?0.55:r.gren?1.1:0.9);
+      for(const h of hostiles()){const d=h.pos.distanceTo(r.p);if(d<R){damageEntity(h,(r.dmg||80)*(1-d/(R+1)),'player');if(r.plasma&&h.alive)h.stun=Math.max(h.stun||0,1.5);}}
+      // свой же взрыв рядом бьёт и по тебе
+      if(r.gren||r.plasma){const d=P.pos.distanceTo(r.p);if(d<R*0.8){damagePlayer((r.dmg||80)*0.25*(1-d/R),true);}}
+      disposeObj(r.mesh);rockets.splice(i,1);}
   }
 }
 // ===== Модули основного оружия (заменяют пушку) =====
@@ -1585,7 +1657,12 @@ const WEAPONS={
   gun:{name:'Пушка',desc:'Стандартное оружие дрона: быстрые трассеры.',price:0},
   swarm:{name:'Рой ракет',desc:'Одно нажатие: залп из 8 самонаводящихся ракет по разным целям. Сразу перегрев, остывает за 1 секунду.',price:900},
   shotgun:{name:'Дробовик',desc:'9 дробин веером. Страшен вблизи, бесполезен издалека. 3 выстрела до перегрева.',price:600},
-  rail:{name:'Рельсотрон',desc:'Мгновенный луч прошивает всех врагов на линии насквозь. Медленный, сильно греется.',price:1500}
+  rail:{name:'Рельсотрон',desc:'Мгновенный луч прошивает всех врагов на линии насквозь. Медленный, сильно греется.',price:1500},
+  minigun:{name:'Миниган',desc:'Раскручивается, пока держишь огонь: с каждой секундой стреляет всё быстрее. Пули слабее, разброс больше.',price:800},
+  grenade:{name:'Гранатомёт',desc:'Гранаты летят по дуге и взрываются при ударе. Большой радиус взрыва, бьёт врагов за укрытием.',price:700},
+  plasma:{name:'Плазма',desc:'Медленный светящийся шар. Попадание — сильный взрыв плазмы, оглушает дронов.',price:1100},
+  tesla:{name:'Тесла',desc:'Молния бьёт ближайшего врага в прицеле и перескакивает ещё на 4 цели рядом. Оглушает.',price:1300},
+  laser:{name:'Лазер',desc:'Непрерывный луч, пока держишь огонь. Плавит всё на линии, но быстро перегревается.',price:1600}
 };
 const railFx=[];
 function salvoRocket(s){
@@ -1607,8 +1684,40 @@ function updateSalvo(dt){
 function fireSpecial(W){
   const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone();
   const gun=new V3(0,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
-  if(W!=='swarm'){let ba=0.12,aim=null;for(const h of hostiles()){_v2.subVectors(h.pos,P.pos);if(_v2.length()>(W==='rail'?150:45))continue;const a=f.angleTo(_v2);if(a<ba){ba=a;aim=h;}}
-    if(aim)f.subVectors(aim.pos,P.pos).normalize();}
+  const RNG={rail:150,minigun:80,grenade:70,plasma:90,tesla:38,laser:90};
+  let aim=null;
+  if(W!=='swarm'){let ba=W==='tesla'?0.35:0.12;for(const h of hostiles()){_v2.subVectors(h.pos,P.pos);if(_v2.length()>(RNG[W]||45))continue;const a=f.angleTo(_v2);if(a<ba){ba=a;aim=h;}}
+    if(aim&&W!=='grenade')f.subVectors(aim.pos,P.pos).normalize();}
+  if(W==='minigun'){
+    P.fireCd=lerp(0.14,0.032,P.spin);P.heat+=0.022*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+    const side=(P.gunSide^=1)?0.06:-0.06;const gp=new V3(side,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
+    const d=f.clone().add(new V3(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(0.012+0.02*P.spin)).normalize();
+    fireBolt(gp,d,230,'player',P.cfg.dmg*0.6,[6,4,1.4],3.2);muzzleFlash(gp,d);sfx('minigun',null,0.7);addShake(0.015);P.w.x+=rand(0.1,0.3);P.w.z+=rand(-0.2,0.2);
+    sparks.emit(gp.x,gp.y,gp.z,d.x*6+rand(-1,1),d.y*6+rand(-1,1),d.z*6+rand(-1,1),4,2.2,0.7,0.025,0.1,0,3);return;
+  }
+  if(W==='grenade'){
+    // бросок по дуге с поправкой на падение
+    const sp=34;let d=f.clone();if(aim){_v2.subVectors(aim.pos,gun);const L=_v2.length(),t=L/sp;_v2.y+=0.5*9.81*t*t;d.copy(_v2).normalize();}else d.y+=0.12;d.normalize();
+    const mesh=new THREE.Mesh(new THREE.SphereGeometry(0.07,10,8),new THREE.MeshStandardMaterial({color:0x2b3326,metalness:0.6,roughness:0.5,emissive:new THREE.Color(0.6,0.15,0.05)}));fxGroup.add(mesh);
+    rockets.push({p:gun.clone().addScaledVector(d,0.3),v:d.multiplyScalar(sp).add(P.vel),life:3,mesh,dmg:P.cfg.dmg*11,rad:6.5,gren:true});
+    P.fireCd=0.6;P.heat+=0.3*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+    sfx('grenade');addShake(0.1);P.w.x+=rand(0.8,1.3);P.vel.addScaledVector(f,-0.8);muzzleFlash(gun,f);return;
+  }
+  if(W==='plasma'){
+    const mesh=new THREE.Mesh(new THREE.SphereGeometry(0.16,16,12),new THREE.MeshBasicMaterial({color:new THREE.Color(1.5,4,12)}));fxGroup.add(mesh);
+    rockets.push({p:gun.clone().addScaledVector(f,0.4),v:f.clone().multiplyScalar(48).add(P.vel),life:3,mesh,dmg:P.cfg.dmg*8,rad:4.5,plasma:true});
+    P.fireCd=0.45;P.heat+=0.28*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+    sfx('plasma');addShake(0.08);P.w.x+=rand(0.5,0.9);flashLight(gun,[0.4,0.7,1],70,0.1);return;
+  }
+  if(W==='tesla'){
+    P.fireCd=0.7;P.heat+=0.3*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+    sfx('tesla');addShake(0.1);flashLight(gun,[0.6,0.8,1],90,0.12);
+    let from=gun.clone(),cur=aim,dmg=P.cfg.dmg*5;const hit=new Set();
+    if(!cur){let L=0;const p=new V3();while(L<14){L+=0.5;p.copy(gun).addScaledVector(f,L);if(pointBlocked(p))break;}teslaArc(from,p);burst(p,10,[0.8,1.5,5],5,0.04,0.3,0,2);return;}
+    for(let n=0;n<5&&cur;n++){hit.add(cur);teslaArc(from,cur.pos);damageEntity(cur,dmg,'player');if(cur.alive!==false)cur.stun=Math.max(cur.stun||0,0.8);burst(cur.pos,14,[0.8,1.5,5],6,0.04,0.35,0,2);
+      from=cur.pos.clone();dmg*=0.8;let nb=null,nd=14;for(const h of hostiles()){if(hit.has(h))continue;const d=h.pos.distanceTo(from);if(d<nd){nd=d;nb=h;}}cur=nb;}
+    if(hit.size>2)toast('ЦЕПЬ: '+hit.size,'ok');return;
+  }
   if(W==='swarm'){
     const ts=hostiles().filter(h=>{const d=_v2.subVectors(h.pos,P.pos);return d.length()<130&&f.angleTo(d)<1.0;}).sort((a,b)=>f.angleTo(_v2.subVectors(a.pos,P.pos))-f.angleTo(_v3.subVectors(b.pos,P.pos)));
     // залп по очереди: 8 ракет с интервалом 0.08 с, перегрев сразу, остывание 1 с после последней
@@ -1630,18 +1739,50 @@ function fireSpecial(W){
     sfx('rail');addShake(0.2);P.w.x+=rand(1,1.6);flashLight(gun,[0.4,0.8,1],80,0.1);if(n>1)toast('ПРОШИТО НАСКВОЗЬ: '+n,'ok');
   }
 }
-function updateRailFx(dt){for(let i=railFx.length-1;i>=0;i--){const r=railFx[i];r.t-=dt;const k=Math.max(0,r.t/0.35);r.m.material.opacity=k;r.m.scale.x=r.m.scale.y=1+(1-k)*4;if(r.t<=0){disposeObj(r.m);railFx.splice(i,1);}}}
+function updateRailFx(dt){for(let i=railFx.length-1;i>=0;i--){const r=railFx[i];r.t-=dt;const k=Math.max(0,r.t/(r.max||0.35));r.m.material.opacity=r.line?k*(0.5+0.5*Math.random()):k;if(!r.line)r.m.scale.x=r.m.scale.y=1+(1-k)*4;if(r.t<=0){disposeObj(r.m);railFx.splice(i,1);}}}
+// ломаная молния между двумя точками
+function teslaArc(a,b){
+  const pts=[a.clone()],n=10,d=b.clone().sub(a),L=d.length();
+  for(let i=1;i<n;i++){const p=a.clone().addScaledVector(d,i/n);p.x+=rand(-1,1)*L*0.06;p.y+=rand(-1,1)*L*0.06;p.z+=rand(-1,1)*L*0.06;pts.push(p);}
+  pts.push(b.clone());
+  for(const [w,c] of [[1,new THREE.Color(1.5,3,12)],[0,new THREE.Color(6,8,14)]]){
+    const g=new THREE.BufferGeometry().setFromPoints(w?pts:pts.map(p=>p.clone().add(new V3(rand(-0.15,0.15),rand(-0.15,0.15),rand(-0.15,0.15)))));
+    const m=new THREE.Line(g,new THREE.LineBasicMaterial({color:c,transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));fxGroup.add(m);railFx.push({m,t:0.22,max:0.22,line:true});}
+}
+// лазер: непрерывный луч
+let laserM=null,laserT=0;
+function updateLaser(dt,on){
+  if(!laserM){const g=new THREE.CylinderGeometry(0.018,0.018,1,8,1,true);g.rotateX(Math.PI/2);
+    laserM=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:new THREE.Color(14,1.4,1.8),transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));fxGroup.add(laserM);}
+  laserM.visible=on;if(!on){laserT=0;return;}
+  const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone();
+  let ba=0.06,aim=null;for(const h of hostiles()){_v2.subVectors(h.pos,P.pos);if(_v2.length()>90)continue;const a=f.angleTo(_v2);if(a<ba){ba=a;aim=h;}}
+  if(aim)f.subVectors(aim.pos,P.pos).normalize();
+  const gun=new V3(0,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
+  let L=0;const p=new V3();while(L<90){L+=0.5;p.copy(gun).addScaledVector(f,L);if(pointBlocked(p))break;}
+  const end=gun.clone().addScaledVector(f,L);
+  laserM.position.lerpVectors(gun,end,0.5);laserM.quaternion.setFromUnitVectors(_v2.set(0,0,1),f);const th=1+Math.random()*0.6;laserM.scale.set(th,th,L);
+  sparks.emit(end.x,end.y,end.z,rand(-3,3),rand(0,3),rand(-3,3),8,2.5,0.8,0.03,0.25,9.8,1);
+  P.heat+=0.42*dt*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+  laserT-=dt;if(laserT<=0){laserT=0.1;sfx('laser');flashLight(end,[1,0.25,0.25],18,0.1);
+    if(Math.random()<0.5)smoke.emit(end.x,end.y,end.z,0,0.6,0,0.1,0.1,0.1,0.15,0.8,-0.2,2,3);
+    for(const h of hostiles())if(segSphere(gun,end,h.pos,(h.r||1)+0.2)){damageEntity(h,P.cfg.dmg*1.7,'player');burst(h.pos,5,[8,1.5,1],5,0.04,0.25,6,1);}}
+}
 function updateCombat(dt,rdt){
   for(const e of enemies)if(e.alive)updateEnemy(e,dt);
   for(let i=enemies.length-1;i>=0;i--)if(!enemies[i].alive)enemies.splice(i,1);
   for(const t of turrets)updateTurret(t,dt);
-  updateRockets(dt);updateRailFx(dt);
+  rammingCheck();updateRockets(dt);updateRailFx(dt);
   // стрельба игрока
   P.fireCd-=dt;updateSalvo(dt);
   if(P.salvo){}else if(P.ohT>0){P.ohT-=dt;P.heat=Math.max(0,P.ohT);if(P.ohT<=0){P.heat=0;P.overheat=false;sfx('beep');}}
   else{P.heat=Math.max(0,P.heat-dt*(P.overheat?0.35:0.45));if(P.overheat&&P.heat<0.35)P.overheat=false;}
   const W=WEAPONS[profile.weapon]?profile.weapon:'gun';
-  if(W!=='gun'&&inp.fire&&P.alive&&!P.overheat&&P.fireCd<=0&&session.countdown<=0&&P.crashed<=0)fireSpecial(W);
+  P.spin=W==='minigun'&&inp.fire&&!P.overheat?Math.min(1,P.spin+dt*0.8):Math.max(0,P.spin-dt*1.5);
+  if(W==='laser')updateLaser(dt,inp.fire&&P.alive&&!P.overheat&&session.countdown<=0&&P.crashed<=0);
+  else if(laserM&&laserM.visible)laserM.visible=false;
+  if(W==='laser'){}
+  else if(W!=='gun'&&inp.fire&&P.alive&&!P.overheat&&P.fireCd<=0&&session.countdown<=0&&P.crashed<=0)fireSpecial(W);
   else if(inp.fire&&P.alive&&!P.overheat&&P.fireCd<=0&&session.countdown<=0&&P.crashed<=0){
     P.fireCd=P.cfg.fire;P.heat+=P.cfg.heatK||0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
     const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion);
@@ -1740,7 +1881,7 @@ function updatePickups(dt){
     if(Math.random()<dt*8){const c=p.type==='hp'?[0.3,3,0.6]:[3,2.2,0.3];sparks.emit(p.pos.x,p.pos.y,p.pos.z,rand(-0.5,0.5),rand(0.5,2),rand(-0.5,0.5),c[0],c[1],c[2],0.06,0.6,0,1);}
     let take=false;
     if(P.alive&&p.pos.distanceTo(P.pos)<2.2){take=true;
-      if(p.type==='hp'){const h=Math.round(P.maxHp*0.3);P.hp=Math.min(P.maxHp,P.hp+h);toast('РЕМКОМПЛЕКТ +'+h,'ok');}
+      if(p.type==='hp'){const h=Math.round(P.maxHp*0.3);P.hp=Math.min(P.maxHp,P.hp+h);repairDrone(0.4);toast('РЕМКОМПЛЕКТ +'+h+', МОТОРЫ ПОДЛАТАНЫ','ok');}
       else{addCredits(25);toast('КРЕДИТЫ +25','ok');}sfx('pick');}
     if(take||p.life<=0){disposeObj(p.mesh);pickups.splice(i,1);}
   }
@@ -2194,6 +2335,7 @@ function updatePlay(dt,rdt){
   if(P.alive&&session.countdown<=0){const n=Math.max(1,Math.ceil(dt/(1/200))),h=dt/n;for(let i=0;i<n;i++)stepPlayer(inp,h);
     P.bat=Math.max(13.2,P.bat-dt*(0.004+P.thr*0.012));}
   else if(P.alive){P.thr=0;}
+  updateParts(dt);
   if(P.crashed<=0&&P.crashT){P.crashT=0;if(session.mode!=='combat'){respawnPlayer();}}
   if(P.model){P.model.group.position.copy(P.pos);P.model.group.quaternion.copy(P.q);spinProps(P.model,P.alive&&session.countdown<=0?40+P.thr*120:0,dt);}
   P.shieldMesh.visible=P.shield>0&&view==='third';P.shieldMesh.position.copy(P.pos);
@@ -2234,7 +2376,7 @@ function frame(now,forced,noRender){
   // FPV пост-эффекты
   const u=fpvPass.uniforms,inGame=(state==='play'||state==='pause')&&view==='fpv';
   u.uTime.value=gameTime;u.uSpeed.value=inGame?clamp((P.vel.length()-8)/28,0,1):0;u.uAnalog.value=inGame&&settings.analog?1:0;u.uGrain.value=inGame?0.04:0.025;
-  u.uAberr.value=inGame?0.0035+u.uSpeed.value*0.003:0.0018;u.uDistort.value=inGame?0.12:0;u.uDamage.value=dmgFlash;u.uHack.value=lerp(u.uHack.value,hack.active?1:0,1-Math.exp(-rdt*6));u.uVig.value=1;
+  u.uAberr.value=inGame?0.0035+u.uSpeed.value*0.003:0.0018;u.uDistort.value=inGame?0.12:0;u.uDamage.value=Math.max(dmgFlash,inGame?(1-P.cam)*0.32:0);if(inGame&&P.cam<0.6)u.uAnalog.value=1;u.uHack.value=lerp(u.uHack.value,hack.active?1:0,1-Math.exp(-rdt*6));u.uVig.value=1;
   if(!noRender)composer.render(rdt);
   if(forced!==undefined)return;
   // FPS и адаптивное качество
