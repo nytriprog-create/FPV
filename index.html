@@ -1078,7 +1078,7 @@ function updateGust(dt){
   if(gustTimer<=0){gustTimer=rand(0.8,2.5);const p=P.pos;let a=0.6;
     if(p.x>HX-14)a+=2.2;if(p.y>18)a+=1.4;if(curTOD==='night')a+=1.2;
     for(const [x,z] of roofHoles)if(p.x>x-2&&p.x<x+12&&p.z>z-2&&p.z<z+12)a+=1.8;
-    gustT.set(rand(-1,1),rand(-0.4,0.25),rand(-1,1)).normalize().multiplyScalar(a*rand(0.3,1));}
+    gustT.set(rand(-1,1),rand(-0.4,0.25),rand(-1,1)).normalize().multiplyScalar(Math.min(a,3)*rand(0.04,0.12));} // порывы мягче: раньше могли резко толкать дрон
   gust.lerp(gustT,1-Math.exp(-dt*1.4));
 }
 function placePlayer(pos,dirVec){
@@ -1090,7 +1090,7 @@ const rc=(x,ex=0.42)=>x*(1-ex+ex*x*x);
 function stepPlayer(inp,dt){
   const C=P.cfg,g=9.81,acro=settings.flight==='acro'&&!hack.active;
   _v.set(0,1,0).applyQuaternion(P.q);const upY=_v.y;
-  let thr=0;
+  let thr=0;P.liftX=0;
   if(P.crashed>0){P.crashed-=dt;thr=0;}
   else{
     if(acro){_dw.set(-rc(inp.pitch)*C.rate,-rc(inp.yaw)*C.yawRate,-rc(inp.roll)*C.rate);thr=inp.thr;}
@@ -1112,7 +1112,10 @@ function stepPlayer(inp,dt){
       const twEff=C.twr*(0.86+0.14*clamp((P.bat-13.2)/3.6,0,1))*((m[0]+m[1]+m[2]+m[3])/4*0.75+0.25*(deadMotors()?0:1))*geH;
       // воздушный тормоз: когда отпустил подъём или жмёшь спуск, вертикальный разгон гасится быстрее (меньше перелёта)
       if(inp.climb<0.05&&P.vel.y>0)P.vel.y*=Math.exp(-dt*(inp.climb<-0.05?5:2));
-      const aReq=g+(vyT-P.vel.y)*(inp.climb>0.05?4.5:3)-gust.y;thr=clamp(aReq/(twEff*g*Math.max(upY,0.35)),0,1);
+      const aReq=g+(vyT-P.vel.y)*(inp.climb>0.05?4.5:3)-gust.y,den=twEff*g*Math.max(upY,0.35);
+      // лишняя тяга на подъём идёт строго вверх, а не вперёд: иначе при наклоне дрон резко «газовал» и пролетал ворота
+      if(aReq>g){const thrH=clamp(g/den,0,1),need=clamp(aReq/den,0,1);thr=thrH;P.liftX=Math.max(0,need-thrH)*twEff*g;}
+      else thr=clamp(aReq/den,0,1);
     }
     // разбитые моторы: дрон тянет в сторону слабого мотора, крутит по рыскanию и трясёт
     {const m=P.mot,K=6*thr;
@@ -1129,12 +1132,12 @@ function stepPlayer(inp,dt){
     if(acro)tw*=1.5;else{_v2.set(0,0,-1).applyQuaternion(P.q);_v2.y=0;if(_v2.lengthSq()>1e-4)P.vel.addScaledVector(_v2.normalize(),16*dt);}}
   else{P.boosting=false;P.boostE=Math.min(1,P.boostE+dt*0.14);}
   P.thr=thr;
-  _acc.copy(_v).multiplyScalar(thr*tw*g*ge);_acc.y-=g;_acc.add(gust);
+  _acc.copy(_v).multiplyScalar(thr*tw*g*ge);_acc.y-=g;_acc.y+=P.liftX;_acc.add(gust);
   _qi.copy(P.q).invert();_vb.copy(P.vel).applyQuaternion(_qi);const sp=P.vel.length();
   _vb.x*=-C.drag*sp*1.0;_vb.y*=-C.drag*sp*2.3;_vb.z*=-C.drag*sp*0.72;_vb.applyQuaternion(P.q);_acc.add(_vb).addScaledVector(P.vel,-0.04);
   P.vel.addScaledVector(_acc,dt);P.pos.addScaledVector(P.vel,dt);
   // турбулентность в собственном потоке
-  if(P.vel.y<-3.5&&thr>0.25&&upY>0.6){const k=Math.min(1,(-P.vel.y-3.5)/6);P.w.x+=rand(-1,1)*k*40*dt;P.w.z+=rand(-1,1)*k*40*dt;addShake(k*0.04);}
+  if(P.vel.y<-6&&thr>0.25&&upY>0.6){const k=Math.min(1,(-P.vel.y-6)/8);P.w.x+=rand(-1,1)*k*12*dt;P.w.z+=rand(-1,1)*k*12*dt;addShake(k*0.02);}
   const st=collideSphere(P.pos,P.vel,0.2,true);
   if(st.imp>2.5)onPlayerImpact(st.imp);
 }
