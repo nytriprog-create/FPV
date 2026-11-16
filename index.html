@@ -236,6 +236,7 @@ h3{font-size:15px;letter-spacing:.2em;color:var(--dim);margin:16px 0 8px;font-we
     <h3>ДРОН</h3><div id="hg-drones"></div>
     <h3>УЛУЧШЕНИЯ</h3><div id="hg-ups"></div>
     <h3>СКИН</h3><div class="skins" id="hg-skins"></div>
+    <h3>ОСНОВНОЕ ОРУЖИЕ (ЛКМ)</h3><div id="hg-weapons"></div>
     <h3>МОДУЛИ <span id="hg-modcount" style="color:var(--acc2)"></span></h3><div id="hg-mods"></div>
     <div class="row2"><button class="pbtn" data-act="back">ГОТОВО</button></div>
   </div>
@@ -262,7 +263,7 @@ h3{font-size:15px;letter-spacing:.2em;color:var(--dim);margin:16px 0 8px;font-we
       <div><b>W / S</b>наклон вперёд / назад</div>
       <div><b>A / D</b>крен влево / вправо</div>
       <div><b>Мышь</b>поворот, вверх-вниз = наклон камеры (можно сменить на высоту в Настройках)</div>
-      <div><b>Пробел / C</b>вверх / вниз</div>
+      <div><b>Пробел / X</b>вверх / вниз (вниз также C)</div>
       <h3>РЕЖИМ ACRO (БЕЗ СТАБИЛИЗАЦИИ)</h3>
       <div><b>W / S</b>газ больше / меньше</div>
       <div><b>Мышь</b>тангаж и рыскание, <b style="min-width:0">A / D</b> крен</div>
@@ -396,7 +397,7 @@ const settings=Object.assign({},DEF_SETTINGS,store.get('id.settings',{}));
 const isMobile=/Android|iPhone|iPad/i.test(navigator.userAgent);
 let firstRun=false;
 if(!settings.quality||!QUALITY[settings.quality]){settings.quality=isMobile?'low':'high';firstRun=true;}
-const profile=Object.assign({drone:'falcon',skin:'blaze',modules:['hacker','rockets','shield'],done:{},bestCombat:0,bestDrift:0,credits:300,up:{},owned:['wasp','falcon','rhino']},store.get('id.profile',{}));
+const profile=Object.assign({drone:'falcon',skin:'blaze',modules:['hacker','rockets','shield'],done:{},bestCombat:0,bestDrift:0,credits:300,up:{},owned:['wasp','falcon','rhino'],weapon:'gun',weapons:['gun']},store.get('id.profile',{}));
 profile.up=Object.assign({engine:0,armor:0,gun:0,cool:0},profile.up);if(!profile.owned.includes(profile.drone))profile.drone='falcon';
 const saveS=()=>store.set('id.settings',settings), saveP=()=>store.set('id.profile',profile);
 const hasMod=m=>profile.modules.includes(m);
@@ -1061,7 +1062,7 @@ function readInput(dt){
     // мышь вверх-вниз: наклон камеры (вверх до 25°, вниз до 60°) или высота полёта
     if(settings.mouseY!=='climb'){camPitch=clamp(camPitch-mouseDY*0.0022*sens*inv,-1.05,0.44);mStick.y*=Math.exp(-dt*8);}
     else{mStick.y=mStick.y*Math.exp(-dt*5)-mouseDY*0.012*sens*inv;mStick.y=clamp(mStick.y,-1,1);}
-    inp.climb=clamp(ax('Space','KeyC')-(k.ControlLeft?1:0)+mStick.y,-1,1);
+    inp.climb=clamp((k.Space?1:0)-((k.KeyX||k.KeyC||k.ControlLeft)?1:0)+mStick.y,-1,1);
   }
   const rawMX=mouseDX;mouseDX=0;mouseDY=0;
   inp.fire=mouseDown||!!k.KeyJ;inp.boost=!!(k.ShiftLeft||k.ShiftRight);
@@ -1171,6 +1172,9 @@ function sfx(type,pos,vol=1){
   switch(type){
     case 'shot':{const p=rand(0.92,1.08);noise(0.045,2600*p,0.55,'bandpass');noise(0.11,9000,0.12,'highpass');noise(0.16,700*p,0.32);tone(150*p,48,0.13,'sine',0.42);tone(2400*p,1800,0.02,'square',0.03);break;}
     case 'eshot':{const p=rand(0.85,1.0);noise(0.06,1900*p,0.4,'bandpass');noise(0.22,500*p,0.35);tone(110*p,40,0.16,'sine',0.35);break;}
+    case 'swarm':for(let i=0;i<8;i++)setTimeout(()=>sfx('rocket',null,0.5),i*35);noise(0.4,1500,0.4,'bandpass');break;
+    case 'shotgun':noise(0.08,1800,0.8,'bandpass');noise(0.35,500,0.6);tone(110,35,0.25,'sine',0.6);noise(0.2,7000,0.15,'highpass');break;
+    case 'rail':tone(300,4200,0.09,'sawtooth',0.12);tone(5200,800,0.35,'sine',0.14);noise(0.25,6000,0.35,'highpass');tone(90,40,0.3,'sine',0.4);break;
     case 'ric':{const f=rand(1800,3200);tone(f,f*0.45,rand(0.15,0.3),'sine',0.07);noise(0.04,4000,0.18,'bandpass');break;}
     case 'impact':noise(0.05,3500,0.22,'bandpass');noise(0.08,400,0.15);break;
     case 'whiz':{const s=AC.createBufferSource();s.buffer=AC.noiseBuf;const f=AC.createBiquadFilter();f.type='bandpass';f.Q.value=6;f.frequency.setValueAtTime(3500,t);f.frequency.exponentialRampToValueAtTime(900,t+0.22);const gg=AC.createGain();gg.gain.setValueAtTime(0.0001,t);gg.gain.exponentialRampToValueAtTime(0.35*vol,t+0.06);gg.gain.exponentialRampToValueAtTime(0.0001,t+0.24);s.connect(f);f.connect(gg);gg.connect(g);s.start(t,Math.random());s.stop(t+0.26);break;}
@@ -1272,7 +1276,7 @@ function startMode(mode,opts={}){
     trackGroup.visible=true;gatesActive=true;
   }else{trackGroup.visible=false;gatesActive=false;}
   showEditLine(mode==='editor');
-  rebuildPlayer();P.maxHp=P.cfg.hp;P.hp=P.maxHp;P.alive=true;P.heat=0;P.overheat=false;P.shield=0;P.shieldCd=0;P.rocketCd=0;P.empCd=0;P.boostE=1;P.bat=16.8;
+  rebuildPlayer();P.maxHp=P.cfg.hp;P.hp=P.maxHp;P.alive=true;P.heat=0;P.overheat=false;P.shield=0;P.shieldCd=0;P.rocketCd=0;P.empCd=0;P.ohT=0;P.fireCd=0;P.boostE=1;P.bat=16.8;
   Object.assign(race,{next:0,lapRunning:false,laps:0,lapsTarget:mode==='duel'?(opts.mission==='m2'?2:3):0,t:0,lapStart:0,rec:[],recNext:0,lastGate:-1,lastLap:null,finished:false});
   race.best=store.get('id.best.'+trackCode,null);
   ghost.frames=store.get('id.ghost.'+trackCode,null);ghost.idx=0;
@@ -1454,7 +1458,7 @@ function spawnPanel(x,z,ry){
 function clearCombat(){
   for(const e of enemies)disposeObj(e.m.group);enemies.length=0;
   for(const t of turrets)disposeObj(t.g);turrets.length=0;for(const p of panels)disposeObj(p.g);panels.length=0;
-  for(const r of rockets)disposeObj(r.mesh);rockets.length=0;clearExtras();removeColTag('dyn');
+  for(const r of rockets)disposeObj(r.mesh);rockets.length=0;for(const r of railFx)disposeObj(r.m);railFx.length=0;clearExtras();removeColTag('dyn');
   for(const b of bolts)b.on=false;
 }
 function hostiles(){return [...enemies.filter(e=>e.alive&&e.team==='enemy'),...turrets.filter(t=>t.alive&&t.team==='enemy')];}
@@ -1570,17 +1574,59 @@ function updateRockets(dt){
     r.mesh.position.copy(r.p);r.mesh.quaternion.setFromUnitVectors(_v.set(0,0,1),_v2.copy(r.v).normalize());
     let boom=r.life<=0||pointBlocked(r.p);
     if(!boom)for(const h of hostiles())if(segSphere(_v3,r.p,h.pos,(h.r||1)+1)){boom=true;break;}
-    if(boom){explosion(r.p,0.9);for(const h of hostiles()){const d=h.pos.distanceTo(r.p);if(d<5)damageEntity(h,80*(1-d/6),'player');}disposeObj(r.mesh);rockets.splice(i,1);}
+    if(boom){const R=r.rad||5;explosion(r.p,r.small?0.55:0.9);for(const h of hostiles()){const d=h.pos.distanceTo(r.p);if(d<R)damageEntity(h,(r.dmg||80)*(1-d/(R+1)),'player');}disposeObj(r.mesh);rockets.splice(i,1);}
   }
 }
+// ===== Модули основного оружия (заменяют пушку) =====
+const WEAPONS={
+  gun:{name:'Пушка',desc:'Стандартное оружие дрона: быстрые трассеры.',price:0},
+  swarm:{name:'Рой ракет',desc:'Одно нажатие: залп из 8 самонаводящихся ракет по разным целям. Сразу перегрев, остывает за 1 секунду.',price:900},
+  shotgun:{name:'Дробовик',desc:'9 дробин веером. Страшен вблизи, бесполезен издалека. 3 выстрела до перегрева.',price:600},
+  rail:{name:'Рельсотрон',desc:'Мгновенный луч прошивает всех врагов на линии насквозь. Медленный, сильно греется.',price:1500}
+};
+const railFx=[];
+function fireSpecial(W){
+  const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion).clone();
+  const gun=new V3(0,-0.03,-0.15).applyQuaternion(P.q).add(P.pos);
+  if(W!=='swarm'){let ba=0.12,aim=null;for(const h of hostiles()){_v2.subVectors(h.pos,P.pos);if(_v2.length()>(W==='rail'?150:45))continue;const a=f.angleTo(_v2);if(a<ba){ba=a;aim=h;}}
+    if(aim)f.subVectors(aim.pos,P.pos).normalize();}
+  if(W==='swarm'){
+    const ts=hostiles().filter(h=>{const d=_v2.subVectors(h.pos,P.pos);return d.length()<130&&f.angleTo(d)<1.0;}).sort((a,b)=>f.angleTo(_v2.subVectors(a.pos,P.pos))-f.angleTo(_v3.subVectors(b.pos,P.pos)));
+    for(let i=0;i<8;i++){const tg=ts.length?ts[i%ts.length]:null;
+      const d=f.clone().add(new V3(rand(-1,1),rand(-0.3,1),rand(-1,1)).multiplyScalar(0.45)).normalize();
+      const mesh=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.04,0.32,8),new THREE.MeshBasicMaterial({color:new THREE.Color(3,2,1)}));mesh.geometry.rotateX(Math.PI/2);fxGroup.add(mesh);
+      rockets.push({p:gun.clone().addScaledVector(d,0.3),v:d.multiplyScalar(rand(16,24)).add(P.vel),target:tg,life:4.5,mesh,dmg:45,rad:4,small:true});}
+    P.heat=1;P.overheat=true;P.ohT=1;P.fireCd=0.2;sfx('swarm');addShake(0.15);flashLight(gun,[1,0.6,0.3],60,0.12);
+  }else if(W==='shotgun'){
+    for(let i=0;i<9;i++){const d=f.clone().add(new V3(rand(-1,1),rand(-1,1),rand(-1,1)).multiplyScalar(0.07)).normalize();fireBolt(gun,d,200,'player',P.cfg.dmg*0.9,[6,3.2,1.1],2.2);}
+    muzzleFlash(gun,f);muzzle.scale.setScalar(0.32);P.fireCd=0.5;P.heat+=0.34*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+    sfx('shotgun');addShake(0.12);P.w.x+=rand(1.2,1.8);P.vel.addScaledVector(f,-1.2);flashLight(gun,[1,0.7,0.35],45,0.06);
+  }else if(W==='rail'){
+    // дальность луча до стены
+    let L=0;const p=new V3();while(L<160){L+=0.6;p.copy(P.pos).addScaledVector(f,L);if(pointBlocked(p))break;}
+    const end=P.pos.clone().addScaledVector(f,L);let n=0;
+    for(const h of hostiles())if(segSphere(gun,end,h.pos,(h.r||1)+0.35)){damageEntity(h,P.cfg.dmg*9,'player');burst(h.pos,20,[0.6,2.5,6],8,0.05,0.4,0,2);n++;}
+    burst(end,26,[0.6,2.5,6],9,0.05,0.5,6,1.5);for(let k=0;k<5;k++)smoke.emit(end.x,end.y,end.z,rand(-1,1),rand(0,1.5),rand(-1,1),0.14,0.15,0.18,0.3,rand(0.8,1.5),-0.2,2,3);
+    const g=new THREE.CylinderGeometry(0.035,0.035,1,8,1,true);g.rotateX(Math.PI/2);
+    const m=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color:new THREE.Color(1.5,5,12),transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}));
+    m.position.lerpVectors(gun,end,0.5);m.quaternion.setFromUnitVectors(new V3(0,0,1),f);m.scale.set(1,1,gun.distanceTo(end));fxGroup.add(m);railFx.push({m,t:0.35});
+    P.fireCd=0.95;P.heat+=0.45*(P.cfg.heatK||0.07)/0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
+    sfx('rail');addShake(0.2);P.w.x+=rand(1,1.6);flashLight(gun,[0.4,0.8,1],80,0.1);if(n>1)toast('ПРОШИТО НАСКВОЗЬ: '+n,'ok');
+  }
+}
+function updateRailFx(dt){for(let i=railFx.length-1;i>=0;i--){const r=railFx[i];r.t-=dt;const k=Math.max(0,r.t/0.35);r.m.material.opacity=k;r.m.scale.x=r.m.scale.y=1+(1-k)*4;if(r.t<=0){disposeObj(r.m);railFx.splice(i,1);}}}
 function updateCombat(dt,rdt){
   for(const e of enemies)if(e.alive)updateEnemy(e,dt);
   for(let i=enemies.length-1;i>=0;i--)if(!enemies[i].alive)enemies.splice(i,1);
   for(const t of turrets)updateTurret(t,dt);
-  updateRockets(dt);
+  updateRockets(dt);updateRailFx(dt);
   // стрельба игрока
-  P.fireCd-=dt;P.heat=Math.max(0,P.heat-dt*(P.overheat?0.35:0.45));if(P.overheat&&P.heat<0.35)P.overheat=false;
-  if(inp.fire&&P.alive&&!P.overheat&&P.fireCd<=0&&session.countdown<=0&&P.crashed<=0){
+  P.fireCd-=dt;
+  if(P.ohT>0){P.ohT-=dt;P.heat=Math.max(0,P.ohT);if(P.ohT<=0){P.heat=0;P.overheat=false;sfx('beep');}}
+  else{P.heat=Math.max(0,P.heat-dt*(P.overheat?0.35:0.45));if(P.overheat&&P.heat<0.35)P.overheat=false;}
+  const W=WEAPONS[profile.weapon]?profile.weapon:'gun';
+  if(W!=='gun'&&inp.fire&&P.alive&&!P.overheat&&P.fireCd<=0&&session.countdown<=0&&P.crashed<=0)fireSpecial(W);
+  else if(inp.fire&&P.alive&&!P.overheat&&P.fireCd<=0&&session.countdown<=0&&P.crashed<=0){
     P.fireCd=P.cfg.fire;P.heat+=P.cfg.heatK||0.07;if(P.heat>=1){P.heat=1;P.overheat=true;toast('ПЕРЕГРЕВ','bad');}
     const f=_v.set(0,0,-1).applyQuaternion(camera.quaternion);
     let aim=null,ba=0.1;for(const h of hostiles()){_v2.subVectors(h.pos,P.pos);if(_v2.length()>80)continue;const a=f.angleTo(_v2);if(a<ba){ba=a;aim=h;}}
@@ -1913,7 +1959,8 @@ function updateHUD(rdt){
     H.hp.style.width=(P.hp/P.maxHp*100)+'%';H.hp.style.background=P.hp/P.maxHp<0.3?'var(--red)':'var(--ok)';H.hpT.textContent=Math.ceil(P.hp)+'/'+P.maxHp;
     H.heat.style.width=(P.heat*100)+'%';H.heat.style.background=P.overheat?'var(--red)':'var(--acc)';
     H.boostW.style.display=hasMod('boost')?'block':'none';H.boost.style.width=(P.boostE*100)+'%';
-    let mh='';for(const k of profile.modules){const cd=k==='rockets'?P.rocketCd/2.5:k==='shield'?(P.shield>0?0:P.shieldCd/14):k==='emp'?(P.empCd||0)/12:0;
+    const wk=WEAPONS[profile.weapon]?profile.weapon:'gun';
+    let mh='<div class="mod'+(P.overheat?' cd':'')+'" style="border-color:var(--acc2)">ЛКМ '+WEAPONS[wk].name.toUpperCase()+(P.ohT>0?' '+P.ohT.toFixed(1):'')+'</div>';for(const k of profile.modules){const cd=k==='rockets'?P.rocketCd/2.5:k==='shield'?(P.shield>0?0:P.shieldCd/14):k==='emp'?(P.empCd||0)/12:0;
       mh+='<div class="mod'+(cd>0?' cd':'')+'">'+MODULES[k].key+' '+MODULES[k].name.toUpperCase()+(k==='shield'&&P.shield>0?' '+P.shield.toFixed(1):'')+'<i style="width:'+((1-cd)*100)+'%"></i></div>';}
     if(H.mods.innerHTML!==mh)H.mods.innerHTML=mh;
   }
@@ -2009,6 +2056,9 @@ function renderHangar(){
     return `<div class="skin ${profile.skin===k?'sel':''} ${ok?'':'lock'}" data-skin="${k}"><div class="sw" style="background:linear-gradient(90deg,${f} 0 45%,${c} 45%)"></div>${s.name}${ok?'':'<small>'+why+'</small>'}</div>`;}).join('');
   $('#hg-mods').innerHTML=Object.entries(MODULES).map(([k,m])=>`<div class="card ${hasMod(k)?'sel':''}" data-mod="${k}"><b>${m.name.toUpperCase()}</b><span class="tag">${hasMod(k)?'УСТАНОВЛЕН':'клавиша '+m.key}</span><p>${m.desc}</p></div>`).join('');
   $('#hg-modcount').textContent=profile.modules.length+'/'+MOD_SLOTS;
+  $('#hg-weapons').innerHTML=Object.entries(WEAPONS).map(([k,w])=>{const own=profile.weapons.includes(k),sel=(profile.weapon||'gun')===k;
+    const tag=sel?'УСТАНОВЛЕНО':own?'':(profile.credits>=w.price?'КУПИТЬ: ':'ЦЕНА: ')+w.price+' КР';
+    return `<div class="card ${sel?'sel':''} ${!own&&profile.credits<w.price?'lock':''}" data-weapon="${k}"><b>${w.name.toUpperCase()}</b><span class="tag ${sel?'ok':''}">${tag}</span><p>${w.desc}</p></div>`;}).join('');
 }
 function toastMenu(msg){const el=$('#hg-cr');el.textContent=msg;el.style.color='var(--red)';sfx('err');clearTimeout(toastMenu.t);toastMenu.t=setTimeout(()=>{el.style.color='#ffd27a';el.textContent=profile.credits+' КР';},1800);}
 function renderTracks(){
@@ -2051,7 +2101,10 @@ let lastHover=null;
 $('#menu').addEventListener('mouseover',e=>{const b=e.target.closest('.btn,.card,.skin,.pbtn');if(b&&b!==lastHover){lastHover=b;sfx('tick');}});
 $('#menu').addEventListener('click',e=>{
   initAudio();if(e.target.closest('.btn,.card,.skin,.pbtn'))sfx('beep');
-  const t=e.target.closest('[data-act],[data-drone],[data-skin],[data-mod],[data-mission],[data-up],[data-track]');if(!t)return;
+  const t=e.target.closest('[data-act],[data-drone],[data-skin],[data-mod],[data-mission],[data-up],[data-track],[data-weapon]');if(!t)return;
+  if(t.dataset.weapon){const k=t.dataset.weapon,w=WEAPONS[k];
+    if(!profile.weapons.includes(k)){if(profile.credits<w.price){toastMenu('Не хватает кредитов: нужно '+w.price);return;}profile.credits-=w.price;profile.weapons.push(k);sfx('buy');}
+    profile.weapon=k;saveP();renderHangar();return;}
   if(t.dataset.drone){const k=t.dataset.drone,d=DRONES[k];
     if(!profile.owned.includes(k)){if(profile.credits<d.price){toastMenu('Не хватает кредитов: нужно '+d.price);return;}profile.credits-=d.price;profile.owned.push(k);sfx('buy');}
     profile.drone=k;saveP();rebuildPlayer();renderHangar();return;}
@@ -2093,7 +2146,7 @@ function onKeyUI(e){
       const c=P.pos.clone().addScaledVector(_v,5);c.y=clamp(P.pos.y,2.8,CEIL-2.6);const yaw=Math.round(THREE.MathUtils.radToDeg(Math.atan2(_v.x,_v.z)));
       const t=(trackData||[]).concat([[+c.x.toFixed(1),+c.y.toFixed(1),+c.z.toFixed(1),yaw]]);if(t.length>40){toast('Максимум 40 ворот','bad');return;}setTrack(t);showEditLine(true);saveTrackLocal();toast('Ворота '+t.length+' поставлены');sfx('beep');}
     if(e.code==='KeyZ'&&trackData&&trackData.length){setTrack(trackData.slice(0,-1));showEditLine(true);saveTrackLocal();toast('Отменено');}
-    if(e.code==='KeyX'&&gates.length){let bi=-1,bd=12;gates.forEach((g,i)=>{const d=g.c.distanceTo(P.pos);if(d<bd){bd=d;bi=i;}});
+    if(e.code==='KeyB'&&gates.length){let bi=-1,bd=12;gates.forEach((g,i)=>{const d=g.c.distanceTo(P.pos);if(d<bd){bd=d;bi=i;}});
       if(bi>=0){setTrack(trackData.filter((_,i)=>i!==bi));showEditLine(true);saveTrackLocal();toast('Ворота удалены');}else toast('Рядом нет ворот','bad');}
     if(e.code==='KeyT'){if(gates.length<2)toast('Нужно минимум 2 ворот','bad');else startMode('race');}
   }
@@ -2125,7 +2178,7 @@ function updatePlay(dt,rdt){
     const ok=session.mission==='m6'?sc>=1000:true;
     endSession(ok,session.mission==='m6'?(ok?'МИССИЯ ВЫПОЛНЕНА':'МАЛО ОЧКОВ'):'ВРЕМЯ ВЫШЛО',['Очки заноса: '+sc,rec?'Новый рекорд':'Рекорд: '+profile.bestDrift]);}
   // в редакторе подсказка
-  if(session.mode==='editor')H.edit.innerHTML='<b>G</b> поставить ворота перед дроном &nbsp; <b>Z</b> отменить &nbsp; <b>X</b> удалить ближайшие &nbsp; <b>T</b> проверить &nbsp; <b>Esc</b> меню и ссылка';
+  if(session.mode==='editor')H.edit.innerHTML='<b>G</b> поставить ворота перед дроном &nbsp; <b>Z</b> отменить &nbsp; <b>B</b> удалить ближайшие &nbsp; <b>T</b> проверить &nbsp; <b>Esc</b> меню и ссылка';
 }
 let dbgInp=null;
 function frame(now,forced,noRender){
