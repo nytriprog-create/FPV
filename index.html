@@ -329,6 +329,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 let GTAOPass=null;
 try{ ({GTAOPass}=await import('three/addons/postprocessing/GTAOPass.js')); }catch(e){ console.warn('GTAO недоступен',e); }
+let SMAAPass=null;try{ ({SMAAPass}=await import('three/addons/postprocessing/SMAAPass.js')); }catch(e){ console.warn('SMAA недоступен',e); }
 
 // ================= УТИЛИТЫ =================
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -346,9 +347,10 @@ function noise1(x){const i=Math.floor(x),f=x-i,u=f*f*(3-2*f);const h=n=>{const s
 const QUALITY={
   low:{name:'Низкое',pr:Math.min(devicePixelRatio,1)*0.75,shadow:1024,ao:false,dust:700,bloom:true,tex:512},
   medium:{name:'Среднее',pr:Math.min(devicePixelRatio,1.25),shadow:2048,ao:false,dust:1600,bloom:true,tex:1024},
-  high:{name:'Высокое',pr:Math.min(devicePixelRatio,1.6),shadow:4096,ao:true,dust:3000,bloom:true,tex:1024}
+  high:{name:'Высокое',pr:Math.min(devicePixelRatio,1.6),shadow:4096,ao:true,dust:3000,bloom:true,tex:1024,aa:true,tex2:1024},
+  ultra:{name:'Ультра',pr:Math.min(Math.max(devicePixelRatio,1)*1.5,2.25),shadow:8192,ao:true,aoS:16,dust:6000,bloom:true,tex:2048,aa:true,tex2:1024}
 };
-const QORDER=['low','medium','high'];
+const QORDER=['low','medium','high','ultra'];
 const DRONES={
   wasp:{name:'Оса',desc:'Лёгкий гоночный. Бешеная тяга и вращение, но почти нет брони.',twr:5.4,rate:12.5,yawRate:7.5,tau:0.035,drag:0.021,hp:60,dmg:7,fire:0.075,guns:1,arm:0.15,thick:0.9,maxTilt:62,stats:[95,95,30,40]},
   falcon:{name:'Сокол',desc:'Универсал. Хорош и в гонке, и в бою.',twr:4.6,rate:10.5,yawRate:6,tau:0.045,drag:0.024,hp:100,dmg:10,fire:0.09,guns:1,arm:0.19,thick:1,maxTilt:56,stats:[75,75,60,60]},
@@ -419,7 +421,8 @@ const DEF_SETTINGS={quality:null,flight:'angle',tilt:24,fov:106,sens:1,invertY:f
 const settings=Object.assign({},DEF_SETTINGS,store.get('id.settings',{}));
 const isMobile=/Android|iPhone|iPad/i.test(navigator.userAgent);
 let firstRun=false;
-if(!settings.quality||!QUALITY[settings.quality]){settings.quality=isMobile?'low':'high';firstRun=true;}
+if(!settings.quality||!QUALITY[settings.quality]){settings.quality=isMobile?'low':'ultra';firstRun=true;}
+if(!settings.gfx2){settings.gfx2=1;if(settings.quality==='high'&&!isMobile)settings.quality='ultra';}
 const profile=Object.assign({drone:'falcon',skin:'blaze',modules:['hacker','rockets','shield'],done:{},bestCombat:0,bestDrift:0,credits:300,up:{},owned:['wasp','falcon','rhino'],weapon:'gun',weapons:['gun'],special:'fab',specials:['fab']},store.get('id.profile',{}));
 if(!Array.isArray(profile.specials))profile.specials=['fab'];if(!profile.specials.includes('fab'))profile.specials.push('fab');if(!profile.special)profile.special='fab';
 profile.up=Object.assign({engine:0,armor:0,gun:0,cool:0},profile.up);if(!profile.owned.includes(profile.drone))profile.drone='falcon';
@@ -1481,7 +1484,7 @@ function buildComposer(){
   composer=new EffectComposer(renderer);composer.setPixelRatio(q.pr);composer.setSize(innerWidth,innerHeight);
   composer.addPass(new RenderPass(scene,camera));
   aoPass=null;
-  if(q.ao&&GTAOPass){try{aoPass=new GTAOPass(scene,camera,innerWidth,innerHeight);aoPass.updateGtaoMaterial({radius:0.9,distanceFallOff:1.0,thickness:1.2,samples:12});aoPass.blendIntensity=0.85;
+  if(q.ao&&GTAOPass){try{aoPass=new GTAOPass(scene,camera,innerWidth,innerHeight);aoPass.updateGtaoMaterial({radius:0.9,distanceFallOff:1.0,thickness:1.2,samples:q.aoS||12});aoPass.blendIntensity=0.85;
       const orig=aoPass.render.bind(aoPass);aoPass.render=(...a)=>{fxGroup.visible=false;
         // свечения (спрайты) и прозрачные щиты дронов нельзя пускать в расчёт теней AO: иначе вокруг дрона рисовался чёрный квадрат
         const hid=[];dyn.traverse(o=>{if(o.visible&&(o.isSprite||(o.material&&o.material.transparent))){o.visible=false;hid.push(o);}});
@@ -1491,6 +1494,8 @@ function buildComposer(){
     fragmentShader:'uniform sampler2D tDiffuse;varying vec2 vUv;void main(){vec4 c=texture2D(tDiffuse,vUv);vec3 r=c.rgb;bvec3 bad=bvec3(!(r.x>=0.0)||!(r.x<1e4),!(r.y>=0.0)||!(r.y<1e4),!(r.z>=0.0)||!(r.z<1e4));if(any(bad))r=vec3(0.0);gl_FragColor=vec4(min(r,vec3(40.0)),1.0);}'}));
   bloomPass=new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),0.62,0.55,0.95);composer.addPass(bloomPass);
   composer.addPass(new OutputPass());
+  // сглаживание краёв (SMAA) — убирает «лесенку» на проводах, балках и рёбрах
+  if(q.aa&&SMAAPass){try{const aa=new SMAAPass(innerWidth*q.pr,innerHeight*q.pr);composer.addPass(aa);}catch(e){console.warn('SMAA off',e);}}
   fpvPass=new ShaderPass(FPVShader);composer.addPass(fpvPass);
   fpvPass.uniforms.uRes.value.set(innerWidth,innerHeight);
   const sc=innerHeight*q.pr/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)));
@@ -1498,7 +1503,7 @@ function buildComposer(){
 }
 function applyQuality(){
   const q=QUALITY[settings.quality];
-  sun.shadow.mapSize.set(q.shadow,q.shadow);if(sun.shadow.map){sun.shadow.map.dispose();sun.shadow.map=null;}
+  const sh=Math.min(q.shadow,renderer.capabilities.maxTextureSize||4096);sun.shadow.mapSize.set(sh,sh);if(sun.shadow.map){sun.shadow.map.dispose();sun.shadow.map=null;}
   if(dust)dust.geometry.setDrawRange(0,q.dust);
   buildComposer();$('#qbadge').textContent='КАЧЕСТВО: '+q.name.toUpperCase();
 }
@@ -3090,7 +3095,7 @@ function renderSettings(){
 }
 $('#menu').addEventListener('change',e=>{const k=e.target.dataset.set;if(!k)return;
   const v=e.target.type==='checkbox'?e.target.checked:e.target.type==='range'?parseFloat(e.target.value):e.target.value;settings[k]=v;saveS();
-  if(k==='quality'){applyQuality();fpsHist.length=0;}if(k==='tod')applyTOD(v);if(k==='flight'){P.heading=new THREE.Euler().setFromQuaternion(P.q,'YXZ').y;renderSettings();}});
+  if(k==='quality'){applyQuality();fpsHist.length=0;toast('Текстуры обновятся после перезагрузки страницы');}if(k==='tod')applyTOD(v);if(k==='flight'){P.heading=new THREE.Euler().setFromQuaternion(P.q,'YXZ').y;renderSettings();}});
 $('#menu').addEventListener('input',e=>{const k=e.target.dataset.set;if(!k||e.target.type!=='range')return;const v=parseFloat(e.target.value);settings[k]=v;
   const s=$('#sv-'+k);if(s)s.textContent=k==='volume'||k==='music'?Math.round(v*100)+'%':k==='sens'?v:v+'°';saveS();});
 let lastHover=null;
@@ -3227,9 +3232,9 @@ let trackFromLink=false;
 async function init(){
   const q=QUALITY[settings.quality],S=q.tex;
   setLoad(0.05,'Процедурный бетон пола');await tick();T.floor=texFloor(S);
-  setLoad(0.25,'Стены и кирпич');await tick();T.wall=texWall(512);T.brick=texBrick(512);
-  setLoad(0.45,'Ржавый металл');await tick();T.metalY=texMetal(512,[0.85,0.6,0.1],101);T.metalD=texMetal(512,[0.26,0.3,0.29],111);T.metalR=texMetal(512,[0.55,0.16,0.1],121);
-  setLoad(0.62,'Профлист, карбон, разметка');await tick();T.corr=texCorr(512);T.carbon=texCarbon(256);T.carbon.map.repeat.set(3,3);T.hazard=texHazard(256);
+  setLoad(0.25,'Стены и кирпич');await tick();const S2=q.tex2||512;T.wall=texWall(S2);T.brick=texBrick(S2);
+  setLoad(0.45,'Ржавый металл');await tick();T.metalY=texMetal(S2,[0.85,0.6,0.1],101);T.metalD=texMetal(S2,[0.26,0.3,0.29],111);T.metalR=texMetal(S2,[0.55,0.16,0.1],121);
+  setLoad(0.62,'Профлист, карбон, разметка');await tick();T.corr=texCorr(S2);T.carbon=texCarbon(256);T.carbon.map.repeat.set(3,3);T.hazard=texHazard(256);
   const mk=(t,o={},tile=4)=>{const m=new THREE.MeshStandardMaterial(Object.assign({map:t.map,roughnessMap:t.rough,normalMap:t.normal,roughness:1,metalness:0},o));m.userData.tile=tile;m.userData.shared=true;return m;};
   M.floor=mk(T.floor,{normalScale:new THREE.Vector2(0.9,0.9)},16);M.wall=mk(T.wall,{},8);M.brick=mk(T.brick,{},6);
   M.metalY=mk(T.metalY,{metalness:0.55},4);M.metalD=mk(T.metalD,{metalness:0.6},4);M.metalR=mk(T.metalR,{metalness:0.5},3);
@@ -3256,3 +3261,4 @@ window.__ID={run:(sec,i,dt=1/60,stop)=>{const n=Math.round(sec/dt);for(let k=0;k
 </script>
 </body>
 </html>
+
